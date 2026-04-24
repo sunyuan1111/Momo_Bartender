@@ -1,0 +1,63 @@
+{
+  "port": "/dev/ttyUSB0",
+  "baudrate": 1000000,
+  "protocol_version": 0,
+  "handshake": true,
+  "operating_mode": 3,
+  "default_running_time_ms": 600,
+  "default_acceleration": 254,
+  "configure_motors_on_connect": true,
+  "enable_torque_on_connect": true,
+  "disable_torque_on_disconnect": true,
+  "joints": [
+    {
+      "name": "joint_1",
+      "motor_id": 1,
+      "kind": "arm",
+      "gear_ratio": 1.0,
+      "direction": 1
+    },
+    {
+      "name": "joint_2",
+      "motor_id": 2,
+      "kind": "arm",
+      "gear_ratio": 14.0,
+      "direction": 1
+    },
+    {
+      "name": "joint_3",
+      "motor_id": 3,
+      "kind": "arm",
+      "gear_ratio": 14.0,
+      "direction": 1
+    },
+    {
+      "name": "joint_4",
+      "motor_id": 4,
+      "kind": "arm",
+      "gear_ratio": 1.0,
+      "direction": 1
+    },
+    {
+      "name": "joint_5",
+      "motor_id": 5,
+      "kind": "arm",
+      "gear_ratio": 1.0,
+      "direction": 1
+    },
+    {
+      "name": "joint_6",
+      "motor_id": 6,
+      "kind": "arm",
+      "gear_ratio": 1.0,
+      "direction": 1
+    },
+    {
+      "name": "gripper",
+      "motor_id": 7,
+      "kind": "gripper",
+      "gear_ratio": 1.0,
+      "direction": 1
+    }
+  ]
+}
