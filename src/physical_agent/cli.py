@@ -18,14 +18,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("init", help="Connect and configure every servo for step mode.")
-    subparsers.add_parser("state", help="Read current raw state and tracked target state.")
-    subparsers.add_parser("cartesian-state", help="Read the current end-effector xyz estimated from URDF kinematics.")
+    subparsers.add_parser("init", help="Connect and configure every servo for position mode.")
+    subparsers.add_parser("state", help="Read current raw, degree, and target state.")
+    subparsers.add_parser("cartesian-state", help="Read the current end-effector xyz from present joint feedback.")
 
-    home_parser = subparsers.add_parser("home", help="Move arm joints back to the startup zero pose.")
+    home_parser = subparsers.add_parser("home", help="Move arm joints back to the configured zero pose.")
     home_parser.add_argument("--speed-deg-s", type=float, default=None)
 
-    move_joints_parser = subparsers.add_parser("move-joints", help="Move one or more joints to target degrees.")
+    move_joints_parser = subparsers.add_parser(
+        "move-joints",
+        help="Move one or more joints to absolute target degrees relative to each joint zero reference.",
+    )
     move_joints_parser.add_argument(
         "--position",
         action="append",
@@ -34,16 +37,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     move_joints_parser.add_argument("--speed-deg-s", type=float, default=None)
 
-    nudge_joint_parser = subparsers.add_parser("nudge-joint", help="Move a single joint by a delta in degrees.")
+    nudge_joint_parser = subparsers.add_parser(
+        "nudge-joint",
+        help="Move a single joint by a delta in degrees from its current position.",
+    )
     nudge_joint_parser.add_argument("--joint", required=True)
     nudge_joint_parser.add_argument("--delta", type=float, required=True)
     nudge_joint_parser.add_argument("--speed-deg-s", type=float, default=None)
 
-    move_gripper_parser = subparsers.add_parser("move-gripper", help="Move gripper to a target degree value.")
+    move_gripper_parser = subparsers.add_parser(
+        "move-gripper",
+        help="Move gripper to an absolute target degree value.",
+    )
     move_gripper_parser.add_argument("--position", type=float, required=True)
     move_gripper_parser.add_argument("--speed-deg-s", type=float, default=None)
 
-    nudge_gripper_parser = subparsers.add_parser("nudge-gripper", help="Move gripper by a delta in degrees.")
+    nudge_gripper_parser = subparsers.add_parser(
+        "nudge-gripper",
+        help="Move gripper by a delta in degrees from its current position.",
+    )
     nudge_gripper_parser.add_argument("--delta", type=float, required=True)
     nudge_gripper_parser.add_argument("--speed-deg-s", type=float, default=None)
 

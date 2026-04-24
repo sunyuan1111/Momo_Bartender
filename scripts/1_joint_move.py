@@ -17,18 +17,13 @@ def parse_positions(items: list[str]) -> dict[str, float]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Move one or more joints in one process.")
+    parser = argparse.ArgumentParser(description="Move one or more joints to absolute target angles in one process.")
     add_common_arguments(parser)
     parser.add_argument(
         "--position",
         action="append",
         required=True,
-        help="Joint target in the form joint_name=degrees. Repeat for multiple joints.",
-    )
-    parser.add_argument(
-        "--return-zero",
-        action="store_true",
-        help="After the test move, return the same joints to 0 degrees within the same process.",
+        help="Joint target in the form joint_name=degrees, relative to each joint zero reference. Repeat for multiple joints.",
     )
     parser.add_argument(
         "--speed-deg-s",
@@ -40,7 +35,7 @@ def main() -> None:
         "--hold-sec",
         type=float,
         default=1.0,
-        help="Seconds to wait after the move before exiting or returning to zero.",
+        help="Seconds to wait after the move before exiting.",
     )
     args = parser.parse_args()
 
@@ -53,11 +48,6 @@ def main() -> None:
             )
         }
         time.sleep(max(args.hold_sec, 0.0))
-        if args.return_zero:
-            result["return_zero"] = arm.move_joints(
-                {joint_name: 0.0 for joint_name in target_positions},
-                speed_deg_s=args.speed_deg_s,
-            )
         print_json(result)
 
 

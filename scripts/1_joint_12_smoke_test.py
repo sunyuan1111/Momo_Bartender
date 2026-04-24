@@ -21,12 +21,12 @@ def main() -> None:
         "--hold-sec",
         type=float,
         default=1.0,
-        help="Seconds to wait after the move before exiting or returning to zero.",
+        help="Seconds to wait after the move before exiting or returning home.",
     )
     parser.add_argument(
-        "--no-return-zero",
+        "--no-return-home",
         action="store_true",
-        help="Do not return joint_1 and joint_2 back to zero.",
+        help="Do not return joint_1 and joint_2 back to the configured zero pose.",
     )
     args = parser.parse_args()
 
@@ -43,8 +43,8 @@ def main() -> None:
             )
         }
         time.sleep(max(args.hold_sec, 0.0))
-        if not args.no_return_zero:
-            result["return_zero"] = arm.move_joints(
+        if not args.no_return_home:
+            result["return_home"] = arm.move_joints(
                 {"joint_1": 0.0, "joint_2": 0.0},
                 speed_deg_s=args.speed_deg_s,
             )

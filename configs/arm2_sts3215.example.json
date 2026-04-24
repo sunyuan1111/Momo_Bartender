@@ -9,6 +9,9 @@
   "configure_motors_on_connect": true,
   "enable_torque_on_connect": true,
   "disable_torque_on_disconnect": true,
+  "urdf_path": "../models/arm2/urdf/arm2.urdf",
+  "cartesian_base_link": "base_link",
+  "cartesian_tip_link": "link6",
   "joints": [
     {
       "name": "joint_1",

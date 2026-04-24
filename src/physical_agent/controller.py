@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass
 from math import ceil
 from typing import Mapping
@@ -12,18 +13,18 @@ from .lerobot_compat import require_lerobot
 STS3215_RESOLUTION = 4096
 STS3215_PHASE_ANGLE_FEEDBACK_BIT = 0x10
 STS3215_MAX_GOAL_VELOCITY = 32767
+JointSpeedOverride = float | Mapping[str, float] | None
 
 
 @dataclass(frozen=True)
 class JointCommand:
     joint_name: str
     target_deg: float
-    delta_deg: float
-    delta_raw: int
+    goal_raw: int
 
 
 class Sts3215ArmController:
-    """Simple step-mode arm controller built on LeRobot's Feetech bus."""
+    """Simple position-servo arm controller built on LeRobot's Feetech bus."""
 
     def __init__(self, config: ArmConfig):
         self.config = config
@@ -39,6 +40,7 @@ class Sts3215ArmController:
             else None
         )
         self._startup_raw_positions: dict[str, int] = {}
+        self._startup_positions_deg: dict[str, float] = {}
         self._target_positions_deg: dict[str, float] = {joint.name: 0.0 for joint in self.config.joints}
 
     @classmethod
@@ -59,6 +61,10 @@ class Sts3215ArmController:
     @property
     def startup_raw_positions(self) -> dict[str, int]:
         return dict(self._startup_raw_positions)
+
+    @property
+    def startup_positions_deg(self) -> dict[str, float]:
+        return dict(self._startup_positions_deg)
 
     @property
     def target_positions_deg(self) -> dict[str, float]:
@@ -91,10 +97,11 @@ class Sts3215ArmController:
             self._ping_all_expected_motors()
 
         if self.config.configure_motors_on_connect:
-            self._configure_servos_for_step_mode()
+            self._configure_servos_for_position_mode()
 
         self._startup_raw_positions = self.read_present_raw_positions()
-        self._target_positions_deg = {joint.name: 0.0 for joint in self.config.joints}
+        self._startup_positions_deg = self._raw_positions_to_joint_degrees(self._startup_raw_positions)
+        self._target_positions_deg = dict(self._startup_positions_deg)
 
         if self.config.enable_torque_on_connect:
             self.bus.enable_torque()
@@ -118,13 +125,22 @@ class Sts3215ArmController:
             for joint in self.config.joints
         }
 
+    def read_present_positions_deg(self) -> dict[str, float]:
+        return self._raw_positions_to_joint_degrees(self.read_present_raw_positions())
+
     def read_state(self) -> dict:
+        present_raw_positions = self.read_present_raw_positions()
         state = {
             "port": self.config.port,
             "baudrate": self.config.baudrate,
             "operating_mode": self.config.operating_mode,
             "startup_raw_positions": self.startup_raw_positions,
-            "present_raw_positions": self.read_present_raw_positions(),
+            "startup_positions_deg": self.startup_positions_deg,
+            "present_raw_positions": present_raw_positions,
+            "present_positions_deg": self._raw_positions_to_joint_degrees(present_raw_positions),
+            "zero_position_raw_by_joint": {
+                joint.name: joint.zero_position_raw for joint in self.config.joints
+            },
             "target_positions_deg": self.target_positions_deg,
         }
         if self._kinematics is not None:
@@ -146,13 +162,23 @@ class Sts3215ArmController:
             speed_deg_s=speed_deg_s,
         )[joint_name]
 
+    def joint_position_deg_to_raw(self, joint_name: str, target_deg: float) -> int:
+        joint = self.config.require_joint(joint_name)
+        self._validate_joint_limit(joint, target_deg)
+        return self._joint_position_deg_to_raw(joint, float(target_deg))
+
+    def joint_raw_to_position_deg(self, joint_name: str, raw_position: int) -> float:
+        joint = self.config.require_joint(joint_name)
+        return self._joint_raw_to_position_deg(joint, int(raw_position))
+
     def nudge_joint(
         self,
         joint_name: str,
         delta_deg: float,
         speed_deg_s: float | None = None,
     ) -> int:
-        current_target = self._target_positions_deg[joint_name]
+        current_target = self.read_present_positions_deg()[joint_name]
+        self._target_positions_deg[joint_name] = current_target
         return self.move_joint(
             joint_name,
             current_target + delta_deg,
@@ -163,7 +189,7 @@ class Sts3215ArmController:
         self,
         target_positions_deg: Mapping[str, float],
         *,
-        speed_deg_s: float | None = None,
+        speed_deg_s: JointSpeedOverride = None,
     ) -> dict[str, int]:
         self._require_connected()
         assert self.bus is not None
@@ -172,22 +198,20 @@ class Sts3215ArmController:
         result: dict[str, int] = {}
         for command in commands:
             joint = self.config.require_joint(command.joint_name)
-            if command.delta_raw != 0:
-                self._apply_motion_profile(
-                    joint,
-                    delta_raw=command.delta_raw,
-                    speed_deg_s=speed_deg_s,
-                )
-                self.bus.write("Goal_Position", joint.name, int(command.delta_raw), normalize=False)
-                self._target_positions_deg[joint.name] = command.target_deg
-            result[joint.name] = command.delta_raw
+            self._apply_motion_profile(
+                joint,
+                speed_deg_s=self._resolve_joint_speed_deg_s(command.joint_name, speed_deg_s),
+            )
+            self.bus.write("Goal_Position", joint.name, int(command.goal_raw), normalize=False)
+            self._target_positions_deg[joint.name] = command.target_deg
+            result[joint.name] = command.goal_raw
         return result
 
     def move_arm(
         self,
         target_positions_deg: Mapping[str, float],
         *,
-        speed_deg_s: float | None = None,
+        speed_deg_s: JointSpeedOverride = None,
     ) -> dict[str, int]:
         invalid = [name for name in target_positions_deg if name not in self.config.arm_joint_names]
         if invalid:
@@ -281,7 +305,8 @@ class Sts3215ArmController:
 
     def _arm_positions_deg(self, joint_positions_deg: Mapping[str, float] | None) -> dict[str, float]:
         if joint_positions_deg is None:
-            return {joint_name: self._target_positions_deg[joint_name] for joint_name in self.config.arm_joint_names}
+            present_positions_deg = self.read_present_positions_deg()
+            return {joint_name: present_positions_deg[joint_name] for joint_name in self.config.arm_joint_names}
         arm_positions_deg = {joint_name: float(joint_positions_deg[joint_name]) for joint_name in self.config.arm_joint_names}
         return arm_positions_deg
 
@@ -295,7 +320,7 @@ class Sts3215ArmController:
         if missing:
             raise ConnectionError(f"Failed to ping expected motors: {missing}")
 
-    def _configure_servos_for_step_mode(self) -> None:
+    def _configure_servos_for_position_mode(self) -> None:
         assert self.bus is not None
         self.bus.disable_torque()
 
@@ -304,7 +329,7 @@ class Sts3215ArmController:
 
         for joint in self.config.joints:
             if joint.model.lower() == "sts3215":
-                self._clear_phase_angle_feedback_bit(joint.name)
+                self._enable_full_angle_feedback(joint.name)
             self.bus.write("Operating_Mode", joint.name, self.config.operating_mode, normalize=False)
             self.bus.write(
                 "Acceleration",
@@ -316,14 +341,15 @@ class Sts3215ArmController:
             if goal_velocity is not None:
                 self.bus.write("Goal_Velocity", joint.name, goal_velocity, normalize=False)
 
-    def _clear_phase_angle_feedback_bit(self, joint_name: str) -> None:
+    def _enable_full_angle_feedback(self, joint_name: str) -> None:
         assert self.bus is not None
         phase_value = int(self.bus.read("Phase", joint_name, normalize=False))
-        if phase_value & STS3215_PHASE_ANGLE_FEEDBACK_BIT:
+        updated_phase = phase_value | STS3215_PHASE_ANGLE_FEEDBACK_BIT
+        if updated_phase != phase_value:
             self.bus.write(
                 "Phase",
                 joint_name,
-                phase_value & ~STS3215_PHASE_ANGLE_FEEDBACK_BIT,
+                updated_phase,
                 normalize=False,
             )
 
@@ -334,7 +360,6 @@ class Sts3215ArmController:
         self,
         joint: JointConfig,
         *,
-        delta_raw: int,
         speed_deg_s: float | None,
     ) -> None:
         assert self.bus is not None
@@ -365,17 +390,26 @@ class Sts3215ArmController:
         goal_velocity = ceil(motor_deg_s / 360.0 * STS3215_RESOLUTION)
         return max(1, min(int(goal_velocity), STS3215_MAX_GOAL_VELOCITY))
 
+    def _resolve_joint_speed_deg_s(
+        self,
+        joint_name: str,
+        speed_deg_s: JointSpeedOverride,
+    ) -> float | None:
+        if speed_deg_s is None:
+            return None
+        if isinstance(speed_deg_s, MappingABC):
+            value = speed_deg_s.get(joint_name)
+            return None if value is None else float(value)
+        return float(speed_deg_s)
+
     def _build_joint_command(self, joint_name: str, target_deg: float) -> JointCommand:
         joint = self.config.require_joint(joint_name)
         self._validate_joint_limit(joint, target_deg)
-        current_target = self._target_positions_deg[joint_name]
-        delta_deg = target_deg - current_target
-        delta_raw = self._joint_delta_deg_to_raw(joint, delta_deg)
+        goal_raw = self._joint_position_deg_to_raw(joint, target_deg)
         return JointCommand(
             joint_name=joint_name,
             target_deg=float(target_deg),
-            delta_deg=float(delta_deg),
-            delta_raw=delta_raw,
+            goal_raw=goal_raw,
         )
 
     def _validate_joint_limit(self, joint: JointConfig, target_deg: float) -> None:
@@ -384,6 +418,21 @@ class Sts3215ArmController:
         if joint.max_position_deg is not None and target_deg > joint.max_position_deg:
             raise ValueError(f"{joint.name}: target {target_deg} deg is above {joint.max_position_deg} deg.")
 
-    def _joint_delta_deg_to_raw(self, joint: JointConfig, delta_deg: float) -> int:
-        motor_delta_deg = delta_deg * joint.gear_ratio * joint.direction
-        return int(round(motor_delta_deg / 360.0 * STS3215_RESOLUTION))
+    def _joint_position_deg_to_raw(self, joint: JointConfig, position_deg: float) -> int:
+        motor_delta_deg = position_deg * joint.gear_ratio * joint.direction
+        goal_raw = int(round(joint.zero_position_raw + motor_delta_deg / 360.0 * STS3215_RESOLUTION))
+        if not -32767 <= goal_raw <= 32767:
+            raise ValueError(
+                f"{joint.name}: target {position_deg} deg maps to raw {goal_raw}, outside [-32767, 32767]."
+            )
+        return goal_raw
+
+    def _joint_raw_to_position_deg(self, joint: JointConfig, raw_position: int) -> float:
+        motor_delta_raw = raw_position - joint.zero_position_raw
+        return motor_delta_raw * 360.0 / STS3215_RESOLUTION / joint.gear_ratio * joint.direction
+
+    def _raw_positions_to_joint_degrees(self, raw_positions: Mapping[str, int]) -> dict[str, float]:
+        return {
+            joint.name: self._joint_raw_to_position_deg(joint, int(raw_positions[joint.name]))
+            for joint in self.config.joints
+        }

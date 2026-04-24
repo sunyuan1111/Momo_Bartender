@@ -13,8 +13,14 @@ dependencies = [
     "numpy>=2.0,<2.3",
 ]
 
+[project.optional-dependencies]
+gui = [
+    "PyQt5>=5.15,<5.16",
+]
+
 [project.scripts]
 physical-agent = "physical_agent.cli:main"
+physical-agent-gui = "physical_agent.gui:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -5,8 +5,8 @@ driven by 7 Feetech `sts3215` servos through `LeRobot`'s `FeetechMotorsBus`.
 
 Current scope:
 
-- `sts3215` step mode (`Operating_Mode = 3`)
-- power-on pose recorded as the software zero point
+- `sts3215` position-servo mode (`Operating_Mode = 0`)
+- per-joint zero references through `zero_position_raw`
 - 7-servo default configuration
 - `joint_2` and `joint_3` configured with a `14:1` reduction ratio
 - basic single-joint and multi-joint motion
@@ -32,23 +32,24 @@ kinematics are ready.
 ```bash
 ./scripts/setup_momo_env.sh
 conda activate momo
+pip install -e ".[gui]"
 ```
 
 This setup uses Python 3.12 and installs the minimum hardware-side packages needed for the
 current controller code. `LeRobot` is installed without its full ML stack, then the Feetech bus
-dependencies are installed explicitly.
+dependencies are installed explicitly. The GUI is optional and uses `PyQt5`.
 
 ## Quick Start
 
 1. Copy `configs/arm7_sts3215.example.json` and adjust the serial port, motor IDs, and axis
-   directions for your arm.
-2. Initialize the bus and put every servo into step mode:
+   directions for your arm. By default, every joint uses `zero_position_raw = 2048`.
+2. Initialize the bus and put every servo into position mode:
 
 ```bash
 physical-agent init --config configs/arm7_sts3215.example.json
 ```
 
-3. Move one or more joints in degrees relative to the power-on pose:
+3. Move one or more joints in degrees relative to each joint's configured zero reference:
 
 ```bash
 physical-agent move-joints \
@@ -65,7 +66,7 @@ physical-agent move-gripper \
   --position 15
 ```
 
-5. Read the current raw register state plus the controller's tracked targets:
+5. Read the current raw state, present joint angles, and tracked targets:
 
 ```bash
 physical-agent state --config configs/arm7_sts3215.example.json
@@ -79,31 +80,61 @@ physical-agent solve-cartesian --config configs/arm2_sts3215.example.json --x 0.
 physical-agent move-cartesian --config configs/arm2_sts3215.example.json --x 0.10 --y 0.05 --z 0.18
 ```
 
-## Motion Model
+## Quick Move GUI
 
-This project treats the power-on pose as the logical zero pose. Because `sts3215` step mode is
-incremental, the controller tracks commanded joint targets in software and sends the delta between
-the current target and the next target to `Goal_Position`.
+The repository now includes a stripped-down GUI that keeps only the `Quick Move` workflow and
+removes features that are not supported by the current backend.
 
-For a commanded joint delta:
+- single-window Quick Move interface
+- connect / disconnect
+- Home
+- per-joint step jog
+- Cartesian `X/Y/Z` jog in base frame
+- live joint and TCP state refresh
 
-```text
-motor_delta_deg = joint_delta_deg * gear_ratio * direction
-motor_delta_raw = round(motor_delta_deg / 360 * 4096)
+Deliberately removed from the GUI because the current controller does not support them cleanly:
+
+- orientation `Rx/Ry/Rz` jog
+- multi-page HMI flow
+- camera / speech / VTK viewer integration
+
+Start the GUI with:
+
+```bash
+physical-agent-gui --config configs/arm2_sts3215.example.json
 ```
 
-The controller writes that signed raw delta with:
+If you only want joint-space control, you can also point the GUI at `configs/arm7_sts3215.example.json`.
+In that case Cartesian jog will stay disabled because the config has no `urdf_path`.
+
+## Motion Model
+
+The controller uses `Operating_Mode = 0` and treats `Goal_Position` as an absolute motor-side
+target. Each joint exposes a joint-space target in degrees and maps it to motor raw units through
+its `gear_ratio`, `direction`, and `zero_position_raw`.
+
+For a commanded joint target:
+
+```text
+motor_delta_deg = joint_target_deg * gear_ratio * direction
+goal_raw = round(zero_position_raw + motor_delta_deg / 360 * 4096)
+```
+
+The controller writes that absolute raw target with:
 
 ```python
 bus.write("Goal_Position", joint_name, int(goal_raw), normalize=False)
 ```
 
+Current joint angles are read back from `Present_Position` and converted back into joint-space
+degrees with the inverse mapping.
+
 ## Cartesian Control
 
 Cartesian control is position-only for now. The controller loads the URDF chain, computes forward
-kinematics from the tracked arm joint angles, and solves inverse kinematics with a damped least
-squares Jacobian update. The solved arm joint targets are then passed through the existing
-step-mode joint controller.
+kinematics from the current arm joint feedback, and solves inverse kinematics with a damped least
+squares Jacobian update. The solved arm joint targets are then passed through the position-servo
+joint controller.
 
 ## Assumptions
 
@@ -111,7 +142,7 @@ step-mode joint controller.
 - All 7 motors are `sts3215`.
 - `joint_2` and `joint_3` use a `14:1` ratio.
 - The gripper is servo `7`.
-- Step mode is configured at startup.
+- Position mode is configured at startup.
 - The current code focuses on low-level motion only; URDF alignment and kinematics can be added
   later without restructuring the bus layer.
 

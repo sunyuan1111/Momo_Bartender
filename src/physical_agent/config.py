@@ -17,6 +17,7 @@ class JointConfig:
     kind: JointKind = "arm"
     gear_ratio: float = 1.0
     direction: int = 1
+    zero_position_raw: int = 2048
     speed_deg_s: float | None = None
     acceleration: int | None = None
     min_position_deg: float | None = None
@@ -27,6 +28,8 @@ class JointConfig:
             raise ValueError(f"{self.name}: direction must be -1 or 1.")
         if self.gear_ratio <= 0:
             raise ValueError(f"{self.name}: gear_ratio must be positive.")
+        if not -32767 <= self.zero_position_raw <= 32767:
+            raise ValueError(f"{self.name}: zero_position_raw must be within [-32767, 32767].")
         if self.speed_deg_s is not None and self.speed_deg_s <= 0:
             raise ValueError(f"{self.name}: speed_deg_s must be positive.")
         if self.kind not in ("arm", "gripper"):
@@ -39,7 +42,7 @@ class ArmConfig:
     baudrate: int = 1_000_000
     protocol_version: int = 0
     handshake: bool = True
-    operating_mode: int = 3
+    operating_mode: int = 0
     default_speed_deg_s: float | None = 10.0
     default_acceleration: int = 254
     configure_motors_on_connect: bool = True
@@ -55,6 +58,8 @@ class ArmConfig:
     joints: tuple[JointConfig, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        if self.operating_mode != 0:
+            raise ValueError("ArmConfig currently supports only operating_mode=0 (position servo mode).")
         if self.default_speed_deg_s is not None and self.default_speed_deg_s <= 0:
             raise ValueError("default_speed_deg_s must be positive.")
         names = [joint.name for joint in self.joints]
