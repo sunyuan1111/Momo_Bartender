@@ -51,6 +51,9 @@ class ArmConfig:
     urdf_path: str | None = None
     cartesian_base_link: str = "base_link"
     cartesian_tip_link: str = "link6"
+    cartesian_jog_x_sign: float = 1.0
+    cartesian_jog_y_sign: float = 1.0
+    cartesian_jog_z_sign: float = 1.0
     cartesian_max_iterations: int = 100
     cartesian_position_tolerance_m: float = 1e-3
     cartesian_damping: float = 2e-2
@@ -62,6 +65,13 @@ class ArmConfig:
             raise ValueError("ArmConfig currently supports only operating_mode=0 (position servo mode).")
         if self.default_speed_deg_s is not None and self.default_speed_deg_s <= 0:
             raise ValueError("default_speed_deg_s must be positive.")
+        for axis_name, axis_sign in (
+            ("x", self.cartesian_jog_x_sign),
+            ("y", self.cartesian_jog_y_sign),
+            ("z", self.cartesian_jog_z_sign),
+        ):
+            if float(axis_sign) not in (-1.0, 1.0):
+                raise ValueError(f"cartesian_jog_{axis_name}_sign must be -1 or 1.")
         names = [joint.name for joint in self.joints]
         if len(names) != len(set(names)):
             raise ValueError("Joint names must be unique.")
@@ -80,6 +90,14 @@ class ArmConfig:
     @property
     def arm_joint_names(self) -> tuple[str, ...]:
         return tuple(joint.name for joint in self.joints if joint.kind == "arm")
+
+    @property
+    def cartesian_jog_signs(self) -> dict[str, float]:
+        return {
+            "x": float(self.cartesian_jog_x_sign),
+            "y": float(self.cartesian_jog_y_sign),
+            "z": float(self.cartesian_jog_z_sign),
+        }
 
     @property
     def gripper_joint_name(self) -> str:

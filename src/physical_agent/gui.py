@@ -7,6 +7,15 @@ from pathlib import Path
 
 
 def _configure_qt_environment() -> None:
+    conda_plugins_dir = Path(sys.prefix) / "plugins"
+    conda_platforms_dir = conda_plugins_dir / "platforms"
+    if conda_plugins_dir.is_dir():
+        # Prefer the conda-managed Qt plugin tree when present. This avoids
+        # mixing conda's Qt runtime with wheel-bundled PyQt5 plugins.
+        os.environ["QT_PLUGIN_PATH"] = str(conda_plugins_dir)
+    if conda_platforms_dir.is_dir():
+        os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(conda_platforms_dir)
+
     os.environ.setdefault("QT_OPENGL", "software")
     os.environ.setdefault("QT_XCB_GL_INTEGRATION", "none")
     os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")

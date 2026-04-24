@@ -57,6 +57,7 @@ class ControllerWorker(QObject):
             "port": controller.config.port,
             "joint_names": [joint.name for joint in controller.config.joints],
             "cartesian_enabled": controller.config.has_urdf_kinematics,
+            "cartesian_jog_signs": controller.config.cartesian_jog_signs,
             "default_speed_deg_s": controller.config.default_speed_deg_s,
             "state": state,
             "timestamp": time.time(),
@@ -171,6 +172,7 @@ class QuickMoveWindow(QMainWindow):
         self._connected = False
         self._busy = False
         self._cartesian_enabled = False
+        self._cartesian_jog_signs = {"x": 1.0, "y": 1.0, "z": 1.0}
         self._base_speed_deg_s = 10.0
         self._last_message = "Ready"
         self._jog_hold_key: str | None = None
@@ -284,13 +286,16 @@ class QuickMoveWindow(QMainWindow):
     def _cartesian_delta_from_key(self, key: str) -> tuple[float, float, float] | None:
         step_mm = max(0.1, float(self.page.step_dist_spin.value()))
         step_m = step_mm / 1000.0
+        sx = float(self._cartesian_jog_signs.get("x", 1.0))
+        sy = float(self._cartesian_jog_signs.get("y", 1.0))
+        sz = float(self._cartesian_jog_signs.get("z", 1.0))
         mapping = {
-            "+X": (step_m, 0.0, 0.0),
-            "-X": (-step_m, 0.0, 0.0),
-            "+Y": (0.0, step_m, 0.0),
-            "-Y": (0.0, -step_m, 0.0),
-            "+Z": (0.0, 0.0, step_m),
-            "-Z": (0.0, 0.0, -step_m),
+            "+X": (sx * step_m, 0.0, 0.0),
+            "-X": (-sx * step_m, 0.0, 0.0),
+            "+Y": (0.0, sy * step_m, 0.0),
+            "-Y": (0.0, -sy * step_m, 0.0),
+            "+Z": (0.0, 0.0, sz * step_m),
+            "-Z": (0.0, 0.0, -sz * step_m),
         }
         return mapping.get(str(key).strip().upper())
 
@@ -357,6 +362,7 @@ class QuickMoveWindow(QMainWindow):
             self._last_message = "Disconnected" if not message else message
             self.page.set_status_light("warning" if message else "normal")
             self._cartesian_enabled = False
+            self._cartesian_jog_signs = {"x": 1.0, "y": 1.0, "z": 1.0}
             self._base_speed_deg_s = 10.0
             self.page.set_joint_names(())
             self.page.set_joint_values({})
@@ -385,6 +391,7 @@ class QuickMoveWindow(QMainWindow):
         joint_names = list(data.get("joint_names", []))
         cartesian_enabled = bool(data.get("cartesian_enabled", False))
         self._cartesian_enabled = cartesian_enabled
+        self._cartesian_jog_signs = dict(data.get("cartesian_jog_signs", {"x": 1.0, "y": 1.0, "z": 1.0}))
         default_speed = data.get("default_speed_deg_s")
         self._base_speed_deg_s = 10.0 if default_speed is None else max(0.5, float(default_speed))
         self.page.set_joint_names(joint_names)

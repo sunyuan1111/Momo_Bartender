@@ -107,6 +107,15 @@ physical-agent-gui --config configs/arm2_sts3215.example.json
 If you only want joint-space control, you can also point the GUI at `configs/arm7_sts3215.example.json`.
 In that case Cartesian jog will stay disabled because the config has no `urdf_path`.
 
+For `arm2`, the example GUI config uses `cartesian_base_link = base_footprint` instead of
+`base_link`. The exported URDF contains a fixed `base_footprint -> base_link` rotation, so using
+`base_link` directly makes Cartesian `Y/Z` feel swapped in the GUI.
+
+You can also flip GUI jog directions per axis in the config with
+`cartesian_jog_x_sign`, `cartesian_jog_y_sign`, and `cartesian_jog_z_sign`.
+The `arm2` example sets `cartesian_jog_z_sign = -1` because its `+Z/-Z` feel inverted with the
+current exported model.
+
 ## Motion Model
 
 The controller uses `Operating_Mode = 0` and treats `Goal_Position` as an absolute motor-side
