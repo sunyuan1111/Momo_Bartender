@@ -4,7 +4,7 @@
   "protocol_version": 0,
   "handshake": true,
   "operating_mode": 3,
-  "default_running_time_ms": 600,
+  "default_speed_deg_s": 10.0,
   "default_acceleration": 254,
   "configure_motors_on_connect": true,
   "enable_torque_on_connect": true,

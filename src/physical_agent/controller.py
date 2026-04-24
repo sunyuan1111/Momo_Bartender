@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import ceil
 from typing import Mapping
 
 from .config import ArmConfig, JointConfig
@@ -10,6 +11,7 @@ from .lerobot_compat import require_lerobot
 
 STS3215_RESOLUTION = 4096
 STS3215_PHASE_ANGLE_FEEDBACK_BIT = 0x10
+STS3215_MAX_GOAL_VELOCITY = 32767
 
 
 @dataclass(frozen=True)
@@ -129,22 +131,39 @@ class Sts3215ArmController:
             state["cartesian_position_m"] = self.forward_kinematics()
         return state
 
-    def home(self, duration_ms: int | None = None) -> dict[str, int]:
+    def home(self, speed_deg_s: float | None = None) -> dict[str, int]:
         zero_targets = {joint_name: 0.0 for joint_name in self.config.arm_joint_names}
-        return self.move_joints(zero_targets, duration_ms=duration_ms)
+        return self.move_joints(zero_targets, speed_deg_s=speed_deg_s)
 
-    def move_joint(self, joint_name: str, target_deg: float, duration_ms: int | None = None) -> int:
-        return self.move_joints({joint_name: target_deg}, duration_ms=duration_ms)[joint_name]
+    def move_joint(
+        self,
+        joint_name: str,
+        target_deg: float,
+        speed_deg_s: float | None = None,
+    ) -> int:
+        return self.move_joints(
+            {joint_name: target_deg},
+            speed_deg_s=speed_deg_s,
+        )[joint_name]
 
-    def nudge_joint(self, joint_name: str, delta_deg: float, duration_ms: int | None = None) -> int:
+    def nudge_joint(
+        self,
+        joint_name: str,
+        delta_deg: float,
+        speed_deg_s: float | None = None,
+    ) -> int:
         current_target = self._target_positions_deg[joint_name]
-        return self.move_joint(joint_name, current_target + delta_deg, duration_ms=duration_ms)
+        return self.move_joint(
+            joint_name,
+            current_target + delta_deg,
+            speed_deg_s=speed_deg_s,
+        )
 
     def move_joints(
         self,
         target_positions_deg: Mapping[str, float],
         *,
-        duration_ms: int | None = None,
+        speed_deg_s: float | None = None,
     ) -> dict[str, int]:
         self._require_connected()
         assert self.bus is not None
@@ -153,25 +172,55 @@ class Sts3215ArmController:
         result: dict[str, int] = {}
         for command in commands:
             joint = self.config.require_joint(command.joint_name)
-            self._apply_motion_profile(joint, duration_ms=duration_ms)
             if command.delta_raw != 0:
+                self._apply_motion_profile(
+                    joint,
+                    delta_raw=command.delta_raw,
+                    speed_deg_s=speed_deg_s,
+                )
                 self.bus.write("Goal_Position", joint.name, int(command.delta_raw), normalize=False)
                 self._target_positions_deg[joint.name] = command.target_deg
             result[joint.name] = command.delta_raw
         return result
 
-    def move_arm(self, target_positions_deg: Mapping[str, float], *, duration_ms: int | None = None) -> dict[str, int]:
+    def move_arm(
+        self,
+        target_positions_deg: Mapping[str, float],
+        *,
+        speed_deg_s: float | None = None,
+    ) -> dict[str, int]:
         invalid = [name for name in target_positions_deg if name not in self.config.arm_joint_names]
         if invalid:
             raise ValueError(f"Non-arm joints passed to move_arm: {invalid}")
-        return self.move_joints(target_positions_deg, duration_ms=duration_ms)
+        return self.move_joints(
+            target_positions_deg,
+            speed_deg_s=speed_deg_s,
+        )
 
-    def move_gripper(self, target_deg: float, *, duration_ms: int | None = None) -> int:
-        return self.move_joint(self.config.gripper_joint_name, target_deg, duration_ms=duration_ms)
+    def move_gripper(
+        self,
+        target_deg: float,
+        *,
+        speed_deg_s: float | None = None,
+    ) -> int:
+        return self.move_joint(
+            self.config.gripper_joint_name,
+            target_deg,
+            speed_deg_s=speed_deg_s,
+        )
 
-    def nudge_gripper(self, delta_deg: float, *, duration_ms: int | None = None) -> int:
+    def nudge_gripper(
+        self,
+        delta_deg: float,
+        *,
+        speed_deg_s: float | None = None,
+    ) -> int:
         gripper_name = self.config.gripper_joint_name
-        return self.nudge_joint(gripper_name, delta_deg, duration_ms=duration_ms)
+        return self.nudge_joint(
+            gripper_name,
+            delta_deg,
+            speed_deg_s=speed_deg_s,
+        )
 
     def forward_kinematics(self, joint_positions_deg: Mapping[str, float] | None = None) -> dict[str, float]:
         kinematics = self._require_kinematics()
@@ -191,17 +240,34 @@ class Sts3215ArmController:
             max_step_deg=self.config.cartesian_max_step_deg,
         )
 
-    def move_cartesian(self, x: float, y: float, z: float, *, duration_ms: int | None = None) -> dict[str, int]:
+    def move_cartesian(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        *,
+        speed_deg_s: float | None = None,
+    ) -> dict[str, int]:
         target_positions_deg = self.solve_cartesian(x, y, z)
-        return self.move_arm(target_positions_deg, duration_ms=duration_ms)
+        return self.move_arm(
+            target_positions_deg,
+            speed_deg_s=speed_deg_s,
+        )
 
-    def nudge_cartesian(self, dx: float, dy: float, dz: float, *, duration_ms: int | None = None) -> dict[str, int]:
+    def nudge_cartesian(
+        self,
+        dx: float,
+        dy: float,
+        dz: float,
+        *,
+        speed_deg_s: float | None = None,
+    ) -> dict[str, int]:
         current_position = self.forward_kinematics()
         return self.move_cartesian(
             current_position["x"] + dx,
             current_position["y"] + dy,
             current_position["z"] + dz,
-            duration_ms=duration_ms,
+            speed_deg_s=speed_deg_s,
         )
 
     def _require_connected(self) -> None:
@@ -246,8 +312,9 @@ class Sts3215ArmController:
                 self._joint_acceleration(joint),
                 normalize=False,
             )
-            if joint.running_time_ms is not None:
-                self.bus.write("Running_Time", joint.name, joint.running_time_ms, normalize=False)
+            goal_velocity = self._joint_goal_velocity(joint, speed_deg_s=None)
+            if goal_velocity is not None:
+                self.bus.write("Goal_Velocity", joint.name, goal_velocity, normalize=False)
 
     def _clear_phase_angle_feedback_bit(self, joint_name: str) -> None:
         assert self.bus is not None
@@ -263,17 +330,40 @@ class Sts3215ArmController:
     def _joint_acceleration(self, joint: JointConfig) -> int:
         return int(joint.acceleration if joint.acceleration is not None else self.config.default_acceleration)
 
-    def _joint_running_time(self, joint: JointConfig, duration_ms: int | None) -> int:
-        if duration_ms is not None:
-            return int(duration_ms)
-        if joint.running_time_ms is not None:
-            return int(joint.running_time_ms)
-        return int(self.config.default_running_time_ms)
-
-    def _apply_motion_profile(self, joint: JointConfig, *, duration_ms: int | None) -> None:
+    def _apply_motion_profile(
+        self,
+        joint: JointConfig,
+        *,
+        delta_raw: int,
+        speed_deg_s: float | None,
+    ) -> None:
         assert self.bus is not None
         self.bus.write("Acceleration", joint.name, self._joint_acceleration(joint), normalize=False)
-        self.bus.write("Running_Time", joint.name, self._joint_running_time(joint, duration_ms), normalize=False)
+        goal_velocity = self._joint_goal_velocity(
+            joint,
+            speed_deg_s=speed_deg_s,
+        )
+        if goal_velocity is not None:
+            self.bus.write("Goal_Velocity", joint.name, goal_velocity, normalize=False)
+
+    def _joint_goal_velocity(
+        self,
+        joint: JointConfig,
+        *,
+        speed_deg_s: float | None,
+    ) -> int | None:
+        resolved_speed_deg_s = speed_deg_s
+        if resolved_speed_deg_s is None:
+            resolved_speed_deg_s = joint.speed_deg_s
+        if resolved_speed_deg_s is None:
+            resolved_speed_deg_s = self.config.default_speed_deg_s
+        if resolved_speed_deg_s is None:
+            return None
+        if resolved_speed_deg_s <= 0:
+            raise ValueError(f"{joint.name}: speed_deg_s must be positive.")
+        motor_deg_s = resolved_speed_deg_s * joint.gear_ratio
+        goal_velocity = ceil(motor_deg_s / 360.0 * STS3215_RESOLUTION)
+        return max(1, min(int(goal_velocity), STS3215_MAX_GOAL_VELOCITY))
 
     def _build_joint_command(self, joint_name: str, target_deg: float) -> JointCommand:
         joint = self.config.require_joint(joint_name)

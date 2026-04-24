@@ -17,7 +17,7 @@ class JointConfig:
     kind: JointKind = "arm"
     gear_ratio: float = 1.0
     direction: int = 1
-    running_time_ms: int | None = None
+    speed_deg_s: float | None = None
     acceleration: int | None = None
     min_position_deg: float | None = None
     max_position_deg: float | None = None
@@ -27,6 +27,8 @@ class JointConfig:
             raise ValueError(f"{self.name}: direction must be -1 or 1.")
         if self.gear_ratio <= 0:
             raise ValueError(f"{self.name}: gear_ratio must be positive.")
+        if self.speed_deg_s is not None and self.speed_deg_s <= 0:
+            raise ValueError(f"{self.name}: speed_deg_s must be positive.")
         if self.kind not in ("arm", "gripper"):
             raise ValueError(f"{self.name}: unsupported joint kind '{self.kind}'.")
 
@@ -38,7 +40,7 @@ class ArmConfig:
     protocol_version: int = 0
     handshake: bool = True
     operating_mode: int = 3
-    default_running_time_ms: int = 600
+    default_speed_deg_s: float | None = 10.0
     default_acceleration: int = 254
     configure_motors_on_connect: bool = True
     enable_torque_on_connect: bool = True
@@ -53,6 +55,8 @@ class ArmConfig:
     joints: tuple[JointConfig, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        if self.default_speed_deg_s is not None and self.default_speed_deg_s <= 0:
+            raise ValueError("default_speed_deg_s must be positive.")
         names = [joint.name for joint in self.joints]
         if len(names) != len(set(names)):
             raise ValueError("Joint names must be unique.")
@@ -108,7 +112,17 @@ class ArmConfig:
     def from_dict(cls, payload: dict) -> "ArmConfig":
         payload = dict(payload)
         joints_payload = payload.pop("joints", [])
-        joints = tuple(JointConfig(**joint_payload) for joint_payload in joints_payload)
+        payload.pop("default_running_time_ms", None)
+        joints = tuple(
+            JointConfig(
+                **{
+                    key: value
+                    for key, value in joint_payload.items()
+                    if key != "running_time_ms"
+                }
+            )
+            for joint_payload in joints_payload
+        )
         return cls(joints=joints, **payload)
 
     @classmethod

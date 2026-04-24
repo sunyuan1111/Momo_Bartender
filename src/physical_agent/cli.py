@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("cartesian-state", help="Read the current end-effector xyz estimated from URDF kinematics.")
 
     home_parser = subparsers.add_parser("home", help="Move arm joints back to the startup zero pose.")
-    home_parser.add_argument("--duration-ms", type=int, default=None)
+    home_parser.add_argument("--speed-deg-s", type=float, default=None)
 
     move_joints_parser = subparsers.add_parser("move-joints", help="Move one or more joints to target degrees.")
     move_joints_parser.add_argument(
@@ -32,20 +32,20 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Joint target in the form joint_name=degrees. Repeat for multiple joints.",
     )
-    move_joints_parser.add_argument("--duration-ms", type=int, default=None)
+    move_joints_parser.add_argument("--speed-deg-s", type=float, default=None)
 
     nudge_joint_parser = subparsers.add_parser("nudge-joint", help="Move a single joint by a delta in degrees.")
     nudge_joint_parser.add_argument("--joint", required=True)
     nudge_joint_parser.add_argument("--delta", type=float, required=True)
-    nudge_joint_parser.add_argument("--duration-ms", type=int, default=None)
+    nudge_joint_parser.add_argument("--speed-deg-s", type=float, default=None)
 
     move_gripper_parser = subparsers.add_parser("move-gripper", help="Move gripper to a target degree value.")
     move_gripper_parser.add_argument("--position", type=float, required=True)
-    move_gripper_parser.add_argument("--duration-ms", type=int, default=None)
+    move_gripper_parser.add_argument("--speed-deg-s", type=float, default=None)
 
     nudge_gripper_parser = subparsers.add_parser("nudge-gripper", help="Move gripper by a delta in degrees.")
     nudge_gripper_parser.add_argument("--delta", type=float, required=True)
-    nudge_gripper_parser.add_argument("--duration-ms", type=int, default=None)
+    nudge_gripper_parser.add_argument("--speed-deg-s", type=float, default=None)
 
     solve_cartesian_parser = subparsers.add_parser("solve-cartesian", help="Solve xyz to arm joint angles without moving.")
     solve_cartesian_parser.add_argument("--x", type=float, required=True)
@@ -56,13 +56,13 @@ def build_parser() -> argparse.ArgumentParser:
     move_cartesian_parser.add_argument("--x", type=float, required=True)
     move_cartesian_parser.add_argument("--y", type=float, required=True)
     move_cartesian_parser.add_argument("--z", type=float, required=True)
-    move_cartesian_parser.add_argument("--duration-ms", type=int, default=None)
+    move_cartesian_parser.add_argument("--speed-deg-s", type=float, default=None)
 
     nudge_cartesian_parser = subparsers.add_parser("nudge-cartesian", help="Move the arm by a delta xyz.")
     nudge_cartesian_parser.add_argument("--dx", type=float, required=True)
     nudge_cartesian_parser.add_argument("--dy", type=float, required=True)
     nudge_cartesian_parser.add_argument("--dz", type=float, required=True)
-    nudge_cartesian_parser.add_argument("--duration-ms", type=int, default=None)
+    nudge_cartesian_parser.add_argument("--speed-deg-s", type=float, default=None)
 
     write_default_config_parser = subparsers.add_parser(
         "write-default-config",
@@ -107,14 +107,14 @@ def main() -> None:
             return
 
         if args.command == "home":
-            result = controller.home(duration_ms=args.duration_ms)
+            result = controller.home(speed_deg_s=args.speed_deg_s)
             print(json.dumps(result, indent=2, sort_keys=True))
             return
 
         if args.command == "move-joints":
             result = controller.move_joints(
                 parse_positions(args.position),
-                duration_ms=args.duration_ms,
+                speed_deg_s=args.speed_deg_s,
             )
             print(json.dumps(result, indent=2, sort_keys=True))
             return
@@ -123,7 +123,7 @@ def main() -> None:
             result = controller.nudge_joint(
                 args.joint,
                 args.delta,
-                duration_ms=args.duration_ms,
+                speed_deg_s=args.speed_deg_s,
             )
             print(json.dumps({args.joint: result}, indent=2, sort_keys=True))
             return
@@ -131,7 +131,7 @@ def main() -> None:
         if args.command == "move-gripper":
             result = controller.move_gripper(
                 args.position,
-                duration_ms=args.duration_ms,
+                speed_deg_s=args.speed_deg_s,
             )
             print(json.dumps({"gripper": result}, indent=2, sort_keys=True))
             return
@@ -139,7 +139,7 @@ def main() -> None:
         if args.command == "nudge-gripper":
             result = controller.nudge_gripper(
                 args.delta,
-                duration_ms=args.duration_ms,
+                speed_deg_s=args.speed_deg_s,
             )
             print(json.dumps({"gripper": result}, indent=2, sort_keys=True))
             return
@@ -154,7 +154,7 @@ def main() -> None:
                 args.x,
                 args.y,
                 args.z,
-                duration_ms=args.duration_ms,
+                speed_deg_s=args.speed_deg_s,
             )
             print(json.dumps(result, indent=2, sort_keys=True))
             return
@@ -164,7 +164,7 @@ def main() -> None:
                 args.dx,
                 args.dy,
                 args.dz,
-                duration_ms=args.duration_ms,
+                speed_deg_s=args.speed_deg_s,
             )
             print(json.dumps(result, indent=2, sort_keys=True))
             return
