@@ -20,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init", help="Connect and configure every servo for step mode.")
     subparsers.add_parser("state", help="Read current raw state and tracked target state.")
+    subparsers.add_parser("cartesian-state", help="Read the current end-effector xyz estimated from URDF kinematics.")
 
     home_parser = subparsers.add_parser("home", help="Move arm joints back to the startup zero pose.")
     home_parser.add_argument("--duration-ms", type=int, default=None)
@@ -45,6 +46,23 @@ def build_parser() -> argparse.ArgumentParser:
     nudge_gripper_parser = subparsers.add_parser("nudge-gripper", help="Move gripper by a delta in degrees.")
     nudge_gripper_parser.add_argument("--delta", type=float, required=True)
     nudge_gripper_parser.add_argument("--duration-ms", type=int, default=None)
+
+    solve_cartesian_parser = subparsers.add_parser("solve-cartesian", help="Solve xyz to arm joint angles without moving.")
+    solve_cartesian_parser.add_argument("--x", type=float, required=True)
+    solve_cartesian_parser.add_argument("--y", type=float, required=True)
+    solve_cartesian_parser.add_argument("--z", type=float, required=True)
+
+    move_cartesian_parser = subparsers.add_parser("move-cartesian", help="Move the arm to a target xyz position.")
+    move_cartesian_parser.add_argument("--x", type=float, required=True)
+    move_cartesian_parser.add_argument("--y", type=float, required=True)
+    move_cartesian_parser.add_argument("--z", type=float, required=True)
+    move_cartesian_parser.add_argument("--duration-ms", type=int, default=None)
+
+    nudge_cartesian_parser = subparsers.add_parser("nudge-cartesian", help="Move the arm by a delta xyz.")
+    nudge_cartesian_parser.add_argument("--dx", type=float, required=True)
+    nudge_cartesian_parser.add_argument("--dy", type=float, required=True)
+    nudge_cartesian_parser.add_argument("--dz", type=float, required=True)
+    nudge_cartesian_parser.add_argument("--duration-ms", type=int, default=None)
 
     write_default_config_parser = subparsers.add_parser(
         "write-default-config",
@@ -84,6 +102,10 @@ def main() -> None:
             print(json.dumps(controller.read_state(), indent=2, sort_keys=True))
             return
 
+        if args.command == "cartesian-state":
+            print(json.dumps(controller.forward_kinematics(), indent=2, sort_keys=True))
+            return
+
         if args.command == "home":
             result = controller.home(duration_ms=args.duration_ms)
             print(json.dumps(result, indent=2, sort_keys=True))
@@ -120,6 +142,31 @@ def main() -> None:
                 duration_ms=args.duration_ms,
             )
             print(json.dumps({"gripper": result}, indent=2, sort_keys=True))
+            return
+
+        if args.command == "solve-cartesian":
+            result = controller.solve_cartesian(args.x, args.y, args.z)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return
+
+        if args.command == "move-cartesian":
+            result = controller.move_cartesian(
+                args.x,
+                args.y,
+                args.z,
+                duration_ms=args.duration_ms,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return
+
+        if args.command == "nudge-cartesian":
+            result = controller.nudge_cartesian(
+                args.dx,
+                args.dy,
+                args.dz,
+                duration_ms=args.duration_ms,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
             return
 
     raise RuntimeError(f"Unhandled command: {args.command}")

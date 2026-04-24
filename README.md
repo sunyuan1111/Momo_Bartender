@@ -11,6 +11,7 @@ Current scope:
 - `joint_2` and `joint_3` configured with a `14:1` reduction ratio
 - basic single-joint and multi-joint motion
 - gripper motion through a dedicated API and CLI command
+- URDF-based Cartesian `x/y/z` control for the 6 arm joints
 
 The code intentionally stays small so we can keep iterating once the URDF and higher-level
 kinematics are ready.
@@ -23,6 +24,7 @@ kinematics are ready.
 - `scripts/update_urdf_limits.py`: utility to write joint limits back into a URDF
 - `src/physical_agent/config.py`: typed config loader
 - `src/physical_agent/controller.py`: bus-backed arm controller
+- `src/physical_agent/kinematics.py`: minimal URDF FK/IK for Cartesian control
 - `src/physical_agent/cli.py`: simple command-line entrypoint
 
 ## Install
@@ -69,6 +71,14 @@ physical-agent move-gripper \
 physical-agent state --config configs/arm7_sts3215.example.json
 ```
 
+6. Use the `arm2` URDF for Cartesian control:
+
+```bash
+physical-agent cartesian-state --config configs/arm2_sts3215.example.json
+physical-agent solve-cartesian --config configs/arm2_sts3215.example.json --x 0.10 --y 0.05 --z 0.18
+physical-agent move-cartesian --config configs/arm2_sts3215.example.json --x 0.10 --y 0.05 --z 0.18
+```
+
 ## Motion Model
 
 This project treats the power-on pose as the logical zero pose. Because `sts3215` step mode is
@@ -87,6 +97,13 @@ The controller writes that signed raw delta with:
 ```python
 bus.write("Goal_Position", joint_name, int(goal_raw), normalize=False)
 ```
+
+## Cartesian Control
+
+Cartesian control is position-only for now. The controller loads the URDF chain, computes forward
+kinematics from the tracked arm joint angles, and solves inverse kinematics with a damped least
+squares Jacobian update. The solved arm joint targets are then passed through the existing
+step-mode joint controller.
 
 ## Assumptions
 
@@ -116,3 +133,14 @@ python3 scripts/update_urdf_limits.py \
   models/arm2/urdf/arm2.urdf \
   --write-template models/arm2/config/joint_limits.json
 ```
+
+For interactive editing with a 3D viewer, use the PyBullet editor:
+
+```bash
+python3 scripts/edit_urdf_limits_pybullet.py \
+  models/arm2/urdf/arm2.urdf \
+  --limits-file models/arm2/config/joint_limits.json
+```
+
+The editor loads the URDF in PyBullet, exposes `pose/lower/upper` sliders for each movable joint,
+saves radians into `joint_limits.json`, and can write the updated limits back into the URDF.

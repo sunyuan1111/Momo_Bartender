@@ -22,6 +22,7 @@ PIP_INDEX_URL="$PIP_INDEX_URL" "$PYTHON_BIN" -m pip install \
   "draccus==0.10.0" \
   "pyserial>=3.5,<4" \
   "deepdiff>=7.0.1,<9" \
+  "pybullet>=3.2,<4" \
   "tqdm>=4.64" \
   "feetech-servo-sdk>=1.0.0,<2.0.0"
 PIP_INDEX_URL="$PIP_INDEX_URL" "$PYTHON_BIN" -m pip install --no-deps -e "$REPO_ROOT"

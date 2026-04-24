@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from .config import ArmConfig, JointConfig
+from .kinematics import UrdfArmKinematics
 from .lerobot_compat import require_lerobot
 
 
@@ -25,6 +26,16 @@ class Sts3215ArmController:
     def __init__(self, config: ArmConfig):
         self.config = config
         self.bus = None
+        self._kinematics = (
+            UrdfArmKinematics(
+                urdf_path=self.config.urdf_path,
+                joint_names=self.config.arm_joint_names,
+                base_link=self.config.cartesian_base_link,
+                tip_link=self.config.cartesian_tip_link,
+            )
+            if self.config.has_urdf_kinematics
+            else None
+        )
         self._startup_raw_positions: dict[str, int] = {}
         self._target_positions_deg: dict[str, float] = {joint.name: 0.0 for joint in self.config.joints}
 
@@ -106,7 +117,7 @@ class Sts3215ArmController:
         }
 
     def read_state(self) -> dict:
-        return {
+        state = {
             "port": self.config.port,
             "baudrate": self.config.baudrate,
             "operating_mode": self.config.operating_mode,
@@ -114,6 +125,9 @@ class Sts3215ArmController:
             "present_raw_positions": self.read_present_raw_positions(),
             "target_positions_deg": self.target_positions_deg,
         }
+        if self._kinematics is not None:
+            state["cartesian_position_m"] = self.forward_kinematics()
+        return state
 
     def home(self, duration_ms: int | None = None) -> dict[str, int]:
         zero_targets = {joint_name: 0.0 for joint_name in self.config.arm_joint_names}
@@ -159,9 +173,51 @@ class Sts3215ArmController:
         gripper_name = self.config.gripper_joint_name
         return self.nudge_joint(gripper_name, delta_deg, duration_ms=duration_ms)
 
+    def forward_kinematics(self, joint_positions_deg: Mapping[str, float] | None = None) -> dict[str, float]:
+        kinematics = self._require_kinematics()
+        arm_positions_deg = self._arm_positions_deg(joint_positions_deg)
+        position = kinematics.forward_position(arm_positions_deg)
+        return {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])}
+
+    def solve_cartesian(self, x: float, y: float, z: float, joint_positions_deg: Mapping[str, float] | None = None) -> dict[str, float]:
+        kinematics = self._require_kinematics()
+        arm_positions_deg = self._arm_positions_deg(joint_positions_deg)
+        return kinematics.solve_position_ik(
+            (x, y, z),
+            arm_positions_deg,
+            max_iterations=self.config.cartesian_max_iterations,
+            position_tolerance_m=self.config.cartesian_position_tolerance_m,
+            damping=self.config.cartesian_damping,
+            max_step_deg=self.config.cartesian_max_step_deg,
+        )
+
+    def move_cartesian(self, x: float, y: float, z: float, *, duration_ms: int | None = None) -> dict[str, int]:
+        target_positions_deg = self.solve_cartesian(x, y, z)
+        return self.move_arm(target_positions_deg, duration_ms=duration_ms)
+
+    def nudge_cartesian(self, dx: float, dy: float, dz: float, *, duration_ms: int | None = None) -> dict[str, int]:
+        current_position = self.forward_kinematics()
+        return self.move_cartesian(
+            current_position["x"] + dx,
+            current_position["y"] + dy,
+            current_position["z"] + dz,
+            duration_ms=duration_ms,
+        )
+
     def _require_connected(self) -> None:
         if not self.is_connected:
             raise RuntimeError("Controller is not connected.")
+
+    def _require_kinematics(self) -> UrdfArmKinematics:
+        if self._kinematics is None:
+            raise RuntimeError("Cartesian control requires a URDF path in the arm config.")
+        return self._kinematics
+
+    def _arm_positions_deg(self, joint_positions_deg: Mapping[str, float] | None) -> dict[str, float]:
+        if joint_positions_deg is None:
+            return {joint_name: self._target_positions_deg[joint_name] for joint_name in self.config.arm_joint_names}
+        arm_positions_deg = {joint_name: float(joint_positions_deg[joint_name]) for joint_name in self.config.arm_joint_names}
+        return arm_positions_deg
 
     def _ping_all_expected_motors(self) -> None:
         assert self.bus is not None

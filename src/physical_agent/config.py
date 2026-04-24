@@ -43,6 +43,13 @@ class ArmConfig:
     configure_motors_on_connect: bool = True
     enable_torque_on_connect: bool = True
     disable_torque_on_disconnect: bool = True
+    urdf_path: str | None = None
+    cartesian_base_link: str = "base_link"
+    cartesian_tip_link: str = "link6"
+    cartesian_max_iterations: int = 100
+    cartesian_position_tolerance_m: float = 1e-3
+    cartesian_damping: float = 2e-2
+    cartesian_max_step_deg: float = 8.0
     joints: tuple[JointConfig, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
@@ -56,6 +63,10 @@ class ArmConfig:
     @property
     def joint_map(self) -> dict[str, JointConfig]:
         return {joint.name: joint for joint in self.joints}
+
+    @property
+    def has_urdf_kinematics(self) -> bool:
+        return self.urdf_path is not None
 
     @property
     def arm_joint_names(self) -> tuple[str, ...]:
@@ -102,7 +113,13 @@ class ArmConfig:
 
     @classmethod
     def from_json(cls, path: str | Path) -> "ArmConfig":
-        payload = json.loads(Path(path).read_text())
+        path = Path(path)
+        payload = json.loads(path.read_text())
+        urdf_path = payload.get("urdf_path")
+        if urdf_path is not None:
+            urdf_path = Path(urdf_path)
+            if not urdf_path.is_absolute():
+                payload["urdf_path"] = str((path.parent / urdf_path).resolve())
         return cls.from_dict(payload)
 
     def save_json(self, path: str | Path) -> None:
