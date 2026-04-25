@@ -373,6 +373,20 @@ class Sts3215ArmController:
     def _configure_servo_defaults(self, joint: JointConfig) -> None:
         assert self.bus is not None
         self.bus.write("Return_Delay_Time", joint.name, 0, normalize=False)
+        if self.config.min_position_limit_raw is not None:
+            self.bus.write(
+                "Min_Position_Limit",
+                joint.name,
+                int(self.config.min_position_limit_raw),
+                normalize=False,
+            )
+        if self.config.max_position_limit_raw is not None:
+            self.bus.write(
+                "Max_Position_Limit",
+                joint.name,
+                int(self.config.max_position_limit_raw),
+                normalize=False,
+            )
         if self.config.protocol_version == 0:
             self.bus.write("Maximum_Acceleration", joint.name, 254, normalize=False)
 

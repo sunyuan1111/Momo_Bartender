@@ -1,4 +1,6 @@
-# Physical Agent
+# MOMO BARTENDER
+
+This repository for #AttraX_Sping_Hackthon
 
 This repository provides a small, extensible control layer for a 6-axis arm plus gripper
 driven by 7 Feetech `sts3215` servos through `LeRobot`'s `FeetechMotorsBus`.

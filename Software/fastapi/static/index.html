@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Momo Bartender 控制台</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111114;
+      --ink: #fbf7ef;
+      --muted: #b9b3a7;
+      --line: rgba(255, 255, 255, .16);
+      --panel: rgba(18, 20, 24, .78);
+      --panel-strong: rgba(25, 27, 32, .92);
+      --green: #72d38b;
+      --red: #f06d62;
+      --amber: #e0b95d;
+      --cyan: #6ec8d7;
+      --plum: #bd83cf;
+      --shadow: 0 28px 90px rgba(0, 0, 0, .44);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    body {
+      margin: 0;
+      font-family: "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--ink);
+      background: #151217 url("/assets/bar-neon.jpg") center / cover fixed no-repeat;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, rgba(9, 10, 12, .82), rgba(9, 10, 12, .58) 52%, rgba(9, 10, 12, .86)),
+        radial-gradient(circle at 72% 18%, rgba(110, 200, 215, .24), transparent 34%),
+        radial-gradient(circle at 30% 88%, rgba(224, 185, 93, .18), transparent 38%);
+    }
+
+    button {
+      font: inherit;
+    }
+
+    button:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 3px;
+    }
+
+    .shell {
+      position: relative;
+      z-index: 1;
+      width: min(1240px, calc(100vw - 32px));
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: 22px 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 18px;
+    }
+
+    .topbar {
+      min-height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 2px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, .34);
+      background: rgba(255, 255, 255, .08);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 18px;
+      color: var(--amber);
+      flex: 0 0 auto;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 650;
+      letter-spacing: 0;
+      line-height: 1.1;
+    }
+
+    .subtitle {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .status-strip {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      background: rgba(18, 20, 24, .64);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      background: var(--green);
+      box-shadow: 0 0 18px rgba(114, 211, 139, .75);
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+
+    .dot.running {
+      background: var(--amber);
+      box-shadow: 0 0 18px rgba(224, 185, 93, .78);
+    }
+
+    .dot.error {
+      background: var(--red);
+      box-shadow: 0 0 18px rgba(240, 109, 98, .78);
+    }
+
+    .workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .actions,
+    .side {
+      min-width: 0;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .actions {
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 16px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .small {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .refresh {
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, .07);
+      color: var(--ink);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+    }
+
+    .refresh:hover {
+      background: rgba(255, 255, 255, .12);
+    }
+
+    .grid {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      align-content: start;
+    }
+
+    .action {
+      position: relative;
+      min-height: 138px;
+      border: 1px solid rgba(255, 255, 255, .18);
+      background: linear-gradient(145deg, rgba(255, 255, 255, .11), rgba(255, 255, 255, .045));
+      color: var(--ink);
+      padding: 16px;
+      text-align: left;
+      cursor: pointer;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 10px;
+    }
+
+    .action::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 5px;
+      background: var(--cyan);
+    }
+
+    .action:nth-child(2)::before,
+    .action:nth-child(6)::before {
+      background: var(--amber);
+    }
+
+    .action:nth-child(3)::before,
+    .action:nth-child(7)::before {
+      background: var(--green);
+    }
+
+    .action:nth-child(4)::before {
+      background: var(--plum);
+    }
+
+    .action:nth-child(5)::before {
+      background: var(--red);
+    }
+
+    .action:hover {
+      transform: translateY(-1px);
+      background: linear-gradient(145deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .065));
+    }
+
+    .action:disabled {
+      cursor: not-allowed;
+      opacity: .52;
+      transform: none;
+    }
+
+    .action-title {
+      position: relative;
+      font-size: 24px;
+      font-weight: 720;
+      line-height: 1.15;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .action-meta {
+      position: relative;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .side {
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 14px;
+    }
+
+    .state-box {
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      padding: 14px;
+      min-height: 112px;
+    }
+
+    .state-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, .08);
+      font-size: 13px;
+    }
+
+    .state-line:last-child {
+      border-bottom: 0;
+    }
+
+    .key {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .value {
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+
+    .tool-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .secondary {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, .07);
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    .secondary:hover {
+      background: rgba(255, 255, 255, .12);
+    }
+
+    .secondary:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .log {
+      min-height: 0;
+      overflow: auto;
+      border: 1px solid var(--line);
+      background: rgba(8, 9, 11, .72);
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 980px) {
+      .shell {
+        width: min(100vw - 24px, 760px);
+      }
+
+      .topbar,
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        align-items: flex-start;
+      }
+
+      .status-strip {
+        justify-content: flex-start;
+      }
+
+      .workspace {
+        display: grid;
+      }
+
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 560px) {
+      .shell {
+        width: min(100vw - 18px, 460px);
+        padding: 12px 0;
+      }
+
+      .topbar,
+      .section-head {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .action {
+        min-height: 112px;
+      }
+
+      .action-title {
+        font-size: 21px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">M</div>
+        <div>
+          <h1>Momo Bartender</h1>
+          <p class="subtitle">局域网机械臂动作控制台</p>
+        </div>
+      </div>
+      <div class="status-strip">
+        <div class="pill"><span id="dot" class="dot"></span><span id="stateText">idle</span></div>
+        <div id="activeText" class="pill">无动作</div>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <div class="actions">
+        <div class="section-head">
+          <div>
+            <h2>动作</h2>
+            <p id="message" class="small">等待服务状态</p>
+          </div>
+          <button id="refresh" class="refresh" type="button" title="刷新">↻</button>
+        </div>
+        <div id="actionGrid" class="grid"></div>
+      </div>
+
+      <aside class="side">
+        <div>
+          <h2>状态</h2>
+          <p id="serverText" class="small">0.0.0.0:1999</p>
+        </div>
+        <div class="state-box">
+          <div class="state-line"><span class="key">开始</span><span id="startedAt" class="value">-</span></div>
+          <div class="state-line"><span class="key">结束</span><span id="finishedAt" class="value">-</span></div>
+          <div class="state-line"><span class="key">耗时</span><span id="duration" class="value">-</span></div>
+          <div class="state-line"><span class="key">返回码</span><span id="returnCode" class="value">-</span></div>
+        </div>
+        <div class="tool-row">
+          <button id="robotState" class="secondary" type="button">读取机械臂状态</button>
+        </div>
+        <pre id="log" class="log"></pre>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const grid = document.querySelector("#actionGrid");
+    const dot = document.querySelector("#dot");
+    const stateText = document.querySelector("#stateText");
+    const activeText = document.querySelector("#activeText");
+    const message = document.querySelector("#message");
+    const serverText = document.querySelector("#serverText");
+    const startedAt = document.querySelector("#startedAt");
+    const finishedAt = document.querySelector("#finishedAt");
+    const duration = document.querySelector("#duration");
+    const returnCode = document.querySelector("#returnCode");
+    const log = document.querySelector("#log");
+    const refresh = document.querySelector("#refresh");
+    const robotState = document.querySelector("#robotState");
+
+    let actions = [];
+    let busy = false;
+
+    function fmtDuration(seconds) {
+      if (seconds === null || seconds === undefined) return "-";
+      return `${Number(seconds).toFixed(2)} s`;
+    }
+
+    function renderActions() {
+      grid.innerHTML = "";
+      actions.forEach((action) => {
+        const button = document.createElement("button");
+        button.className = "action";
+        button.type = "button";
+        button.disabled = busy;
+        button.dataset.name = action.name;
+        const durationText = action.duration_sec === undefined ? "" : ` · ${Number(action.duration_sec).toFixed(1)}s`;
+        button.innerHTML = `
+          <span class="action-title">${action.label}</span>
+          <span class="action-meta">${action.name}.json · ${action.frame_count ?? "-"} 帧${durationText}</span>
+        `;
+        button.addEventListener("click", () => runAction(action.name));
+        grid.appendChild(button);
+      });
+    }
+
+    function setButtonsDisabled(disabled) {
+      document.querySelectorAll(".action").forEach((button) => {
+        button.disabled = disabled;
+      });
+      robotState.disabled = disabled;
+    }
+
+    function applyState(data) {
+      actions = data.actions || actions;
+      busy = Boolean(data.busy);
+      stateText.textContent = data.state || "idle";
+      message.textContent = data.message || "";
+      activeText.textContent = data.active_action ? data.active_action.label : "无动作";
+      startedAt.textContent = data.started_at || "-";
+      finishedAt.textContent = data.finished_at || "-";
+      duration.textContent = fmtDuration(data.duration_sec);
+      returnCode.textContent = data.returncode === null || data.returncode === undefined ? "-" : data.returncode;
+      serverText.textContent = `${data.server?.host || "0.0.0.0"}:${data.server?.port || "1999"}`;
+      dot.className = `dot ${data.state === "running" ? "running" : data.state === "error" ? "error" : ""}`;
+      log.textContent = [
+        ...(data.logs || []),
+        data.last_error ? `\nERROR\n${data.last_error}` : "",
+        data.stderr_tail ? `\nSTDERR\n${data.stderr_tail}` : "",
+      ].filter(Boolean).join("\n");
+      renderActions();
+      setButtonsDisabled(busy);
+    }
+
+    async function loadState() {
+      try {
+        const response = await fetch("/api/state", { cache: "no-store" });
+        const data = await response.json();
+        applyState(data);
+      } catch (error) {
+        stateText.textContent = "offline";
+        message.textContent = String(error);
+        dot.className = "dot error";
+      }
+    }
+
+    async function runAction(name) {
+      setButtonsDisabled(true);
+      message.textContent = `发送 ${name}`;
+      try {
+        const response = await fetch(`/api/actions/${encodeURIComponent(name)}`, {
+          method: "POST",
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || data.error || "请求失败");
+        }
+        await loadState();
+      } catch (error) {
+        message.textContent = String(error);
+        await loadState();
+      }
+    }
+
+    async function readRobotState() {
+      robotState.disabled = true;
+      try {
+        const response = await fetch("/api/robot-state", { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(JSON.stringify(data.detail || data, null, 2));
+        }
+        log.textContent = JSON.stringify(data.robot_state || data, null, 2);
+      } catch (error) {
+        log.textContent = String(error);
+      } finally {
+        robotState.disabled = busy;
+      }
+    }
+
+    refresh.addEventListener("click", loadState);
+    robotState.addEventListener("click", readRobotState);
+    loadState();
+    window.setInterval(loadState, 1200);
+  </script>
+</body>
+</html>

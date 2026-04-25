@@ -38,11 +38,13 @@ class JointConfig:
 
 @dataclass(frozen=True)
 class ArmConfig:
-    port: str = "/dev/ttyUSB0"
+    port: str = "/dev/ttyACM0"
     baudrate: int = 1_000_000
     protocol_version: int = 0
     handshake: bool = True
     operating_mode: int = 0
+    min_position_limit_raw: int | None = 0
+    max_position_limit_raw: int | None = 0
     default_speed_deg_s: float | None = 10.0
     default_acceleration: int = 254
     configure_motors_on_connect: bool = True
@@ -63,6 +65,16 @@ class ArmConfig:
     def __post_init__(self) -> None:
         if self.operating_mode != 0:
             raise ValueError("ArmConfig currently supports only operating_mode=0 (position servo mode).")
+        if self.min_position_limit_raw is not None and not 0 <= self.min_position_limit_raw <= 4095:
+            raise ValueError("min_position_limit_raw must be within [0, 4095].")
+        if self.max_position_limit_raw is not None and not 0 <= self.max_position_limit_raw <= 4095:
+            raise ValueError("max_position_limit_raw must be within [0, 4095].")
+        if (
+            self.min_position_limit_raw is not None
+            and self.max_position_limit_raw is not None
+            and self.min_position_limit_raw > self.max_position_limit_raw
+        ):
+            raise ValueError("min_position_limit_raw must be less than or equal to max_position_limit_raw.")
         if self.default_speed_deg_s is not None and self.default_speed_deg_s <= 0:
             raise ValueError("default_speed_deg_s must be positive.")
         for axis_name, axis_sign in (

@@ -24,9 +24,17 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--port", default=DEFAULT_PORT)
 
 
-def make_controller(config_path: Path, port: str) -> Sts3215ArmController:
+def make_controller(
+    config_path: Path,
+    port: str,
+    *,
+    disable_torque_on_disconnect: bool | None = None,
+) -> Sts3215ArmController:
     config = ArmConfig.from_json(config_path)
-    return Sts3215ArmController(replace(config, port=port))
+    overrides = {"port": port}
+    if disable_torque_on_disconnect is not None:
+        overrides["disable_torque_on_disconnect"] = disable_torque_on_disconnect
+    return Sts3215ArmController(replace(config, **overrides))
 
 
 def print_json(payload: object) -> None:

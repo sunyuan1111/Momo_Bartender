@@ -4,6 +4,8 @@
   "protocol_version": 0,
   "handshake": true,
   "operating_mode": 0,
+  "min_position_limit_raw": 0,
+  "max_position_limit_raw": 0,
   "default_speed_deg_s": 10.0,
   "default_acceleration": 254,
   "configure_motors_on_connect": true,

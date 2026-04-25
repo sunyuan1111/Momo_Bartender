@@ -37,7 +37,12 @@ def parse_args() -> argparse.Namespace:
         "--hold-sec",
         type=float,
         default=0.5,
-        help="Seconds to wait at the end of playback before disconnecting.",
+        help="Seconds to wait at the end of playback before exiting.",
+    )
+    parser.add_argument(
+        "--release-torque-at-end",
+        action="store_true",
+        help="Release torque after playback. By default the arm stays locked at the final frame.",
     )
     parser.add_argument(
         "--allow-zero-mismatch",
@@ -559,7 +564,11 @@ def main() -> None:
         else load_interpolation_override(args.interpolation_override)
     )
 
-    with make_controller(args.config, args.port) as arm:
+    with make_controller(
+        args.config,
+        args.port,
+        disable_torque_on_disconnect=args.release_torque_at_end,
+    ) as arm:
         joint_names = validate_trajectory(
             arm,
             payload,
@@ -623,6 +632,10 @@ def main() -> None:
             previous_t = frame_t
             previous_positions_deg = target_positions_deg
 
+        final_positions_deg = final_positions(arm, joint_names)
+        if args.release_torque_at_end and joint_names:
+            assert arm.bus is not None
+            arm.bus.disable_torque(joint_names, num_retry=5)
         time.sleep(args.hold_sec)
         result = {
             "input": str(args.input),
@@ -635,7 +648,8 @@ def main() -> None:
             "duration_sec": float(dict(playback_samples[-1])["t"]) if playback_samples else 0.0,
             "joint_names": joint_names,
             "interpolation_override": override_summary,
-            "final_positions_deg": final_positions(arm, joint_names),
+            "final_positions_deg": final_positions_deg,
+            "release_torque_at_end": bool(args.release_torque_at_end),
         }
 
     print_json(result)
