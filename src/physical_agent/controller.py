@@ -42,6 +42,8 @@ class Sts3215ArmController:
         self._startup_raw_positions: dict[str, int] = {}
         self._startup_positions_deg: dict[str, float] = {}
         self._target_positions_deg: dict[str, float] = {joint.name: 0.0 for joint in self.config.joints}
+        self._online_joint_names: tuple[str, ...] = tuple(joint.name for joint in self.config.joints)
+        self._missing_joint_names: tuple[str, ...] = ()
 
     @classmethod
     def from_json(cls, path: str) -> "Sts3215ArmController":
@@ -70,6 +72,18 @@ class Sts3215ArmController:
     def target_positions_deg(self) -> dict[str, float]:
         return dict(self._target_positions_deg)
 
+    @property
+    def online_joint_names(self) -> tuple[str, ...]:
+        return self._online_joint_names
+
+    @property
+    def missing_joint_names(self) -> tuple[str, ...]:
+        return self._missing_joint_names
+
+    @property
+    def online_joints(self) -> tuple[JointConfig, ...]:
+        return tuple(self.config.require_joint(joint_name) for joint_name in self._online_joint_names)
+
     def connect(self) -> None:
         if self.is_connected:
             return
@@ -95,6 +109,9 @@ class Sts3215ArmController:
 
         if self.config.handshake:
             self._ping_all_expected_motors()
+        else:
+            self._online_joint_names = tuple(joint.name for joint in self.config.joints)
+            self._missing_joint_names = ()
 
         if self.config.configure_motors_on_connect:
             self._configure_servos_for_position_mode()
@@ -104,14 +121,18 @@ class Sts3215ArmController:
         self._target_positions_deg = dict(self._startup_positions_deg)
 
         if self.config.enable_torque_on_connect:
-            self.bus.enable_torque()
+            self.bus.enable_torque(list(self._online_joint_names))
 
     def disconnect(self) -> None:
         if not self.is_connected:
             return
         assert self.bus is not None
-        self.bus.disconnect(disable_torque=self.config.disable_torque_on_disconnect)
-        self.bus = None
+        try:
+            if self.config.disable_torque_on_disconnect and self._online_joint_names:
+                self.bus.disable_torque(list(self._online_joint_names), num_retry=5)
+        finally:
+            self.bus.disconnect(disable_torque=False)
+            self.bus = None
 
     def initialize(self) -> dict[str, int]:
         self.connect()
@@ -122,7 +143,7 @@ class Sts3215ArmController:
         assert self.bus is not None
         return {
             joint.name: int(self.bus.read("Present_Position", joint.name, normalize=False))
-            for joint in self.config.joints
+            for joint in self.online_joints
         }
 
     def read_present_positions_deg(self) -> dict[str, float]:
@@ -134,6 +155,8 @@ class Sts3215ArmController:
             "port": self.config.port,
             "baudrate": self.config.baudrate,
             "operating_mode": self.config.operating_mode,
+            "online_joint_names": list(self._online_joint_names),
+            "missing_joint_names": list(self._missing_joint_names),
             "startup_raw_positions": self.startup_raw_positions,
             "startup_positions_deg": self.startup_positions_deg,
             "present_raw_positions": present_raw_positions,
@@ -143,7 +166,7 @@ class Sts3215ArmController:
             },
             "target_positions_deg": self.target_positions_deg,
         }
-        if self._kinematics is not None:
+        if self._kinematics is not None and self._all_arm_joints_online():
             state["cartesian_position_m"] = self.forward_kinematics()
         return state
 
@@ -177,6 +200,7 @@ class Sts3215ArmController:
         delta_deg: float,
         speed_deg_s: float | None = None,
     ) -> int:
+        self._require_online_joints([joint_name])
         current_target = self.read_present_positions_deg()[joint_name]
         self._target_positions_deg[joint_name] = current_target
         return self.move_joint(
@@ -305,29 +329,34 @@ class Sts3215ArmController:
 
     def _arm_positions_deg(self, joint_positions_deg: Mapping[str, float] | None) -> dict[str, float]:
         if joint_positions_deg is None:
+            self._require_online_joints(self.config.arm_joint_names)
             present_positions_deg = self.read_present_positions_deg()
             return {joint_name: present_positions_deg[joint_name] for joint_name in self.config.arm_joint_names}
+        self._require_online_joints(self.config.arm_joint_names)
         arm_positions_deg = {joint_name: float(joint_positions_deg[joint_name]) for joint_name in self.config.arm_joint_names}
         return arm_positions_deg
 
     def _ping_all_expected_motors(self) -> None:
         assert self.bus is not None
         missing: list[str] = []
+        online: list[str] = []
         for joint in self.config.joints:
             model_number = self.bus.ping(joint.name, raise_on_error=False)
             if model_number is None:
                 missing.append(joint.name)
-        if missing:
-            raise ConnectionError(f"Failed to ping expected motors: {missing}")
+            else:
+                online.append(joint.name)
+        if not online:
+            raise ConnectionError(f"Failed to ping any expected motors: {missing}")
+        self._online_joint_names = tuple(online)
+        self._missing_joint_names = tuple(missing)
 
     def _configure_servos_for_position_mode(self) -> None:
         assert self.bus is not None
-        self.bus.disable_torque()
+        self.bus.disable_torque(list(self._online_joint_names))
 
-        if hasattr(self.bus, "configure_motors"):
-            self.bus.configure_motors(acceleration=self.config.default_acceleration)
-
-        for joint in self.config.joints:
+        for joint in self.online_joints:
+            self._configure_servo_defaults(joint)
             if joint.model.lower() == "sts3215":
                 self._enable_full_angle_feedback(joint.name)
             self.bus.write("Operating_Mode", joint.name, self.config.operating_mode, normalize=False)
@@ -340,6 +369,12 @@ class Sts3215ArmController:
             goal_velocity = self._joint_goal_velocity(joint, speed_deg_s=None)
             if goal_velocity is not None:
                 self.bus.write("Goal_Velocity", joint.name, goal_velocity, normalize=False)
+
+    def _configure_servo_defaults(self, joint: JointConfig) -> None:
+        assert self.bus is not None
+        self.bus.write("Return_Delay_Time", joint.name, 0, normalize=False)
+        if self.config.protocol_version == 0:
+            self.bus.write("Maximum_Acceleration", joint.name, 254, normalize=False)
 
     def _enable_full_angle_feedback(self, joint_name: str) -> None:
         assert self.bus is not None
@@ -404,6 +439,7 @@ class Sts3215ArmController:
 
     def _build_joint_command(self, joint_name: str, target_deg: float) -> JointCommand:
         joint = self.config.require_joint(joint_name)
+        self._require_online_joints([joint_name])
         self._validate_joint_limit(joint, target_deg)
         goal_raw = self._joint_position_deg_to_raw(joint, target_deg)
         return JointCommand(
@@ -435,4 +471,17 @@ class Sts3215ArmController:
         return {
             joint.name: self._joint_raw_to_position_deg(joint, int(raw_positions[joint.name]))
             for joint in self.config.joints
+            if joint.name in raw_positions
         }
+
+    def _all_arm_joints_online(self) -> bool:
+        online = set(self._online_joint_names)
+        return all(joint_name in online for joint_name in self.config.arm_joint_names)
+
+    def _require_online_joints(self, joint_names: tuple[str, ...] | list[str]) -> None:
+        offline = [joint_name for joint_name in joint_names if joint_name not in self._online_joint_names]
+        if offline:
+            raise ConnectionError(
+                f"Joints are not available on the bus: {offline}. "
+                f"Online joints: {list(self._online_joint_names)}"
+            )

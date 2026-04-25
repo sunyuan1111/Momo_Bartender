@@ -5,3 +5,5 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+Software/ai/runs
+Software/models

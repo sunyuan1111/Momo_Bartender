@@ -11,6 +11,8 @@ from _robot_script_common import add_common_arguments, make_controller, print_js
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TRAJECTORY_PATH = REPO_ROOT / "recordings" / "latest_trajectory.json"
 POSITION_EPS_DEG = 1e-6
+SUPPORTED_OVERRIDE_INTERPOLATIONS = {"linear", "smoothstep"}
+SUPPORTED_OVERRIDE_TIMING_POLICIES = {"match_base_trajectory"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +56,18 @@ def parse_args() -> argparse.Namespace:
         default=30.0,
         help="Interpolation frequency in Hz during playback.",
     )
+    parser.add_argument(
+        "--interpolation-override",
+        type=Path,
+        default=None,
+        help="Optional joint_interpolation_override JSON. Its joints overwrite or extend the base trajectory.",
+    )
+    parser.add_argument(
+        "--max-override-speed-deg-s",
+        type=float,
+        default=None,
+        help="Optional max instantaneous speed allowed for override joints after interpolation.",
+    )
     return parser.parse_args()
 
 
@@ -74,11 +88,31 @@ def load_trajectory(path: Path) -> dict[str, object]:
     return payload
 
 
+def load_interpolation_override(path: Path) -> dict[str, object]:
+    if not path.exists():
+        raise FileNotFoundError(f"Interpolation override file not found: {path}")
+    payload = json.loads(path.read_text())
+    if payload.get("version") != 1:
+        raise ValueError(f"Unsupported interpolation override version: {payload.get('version')}")
+    if payload.get("mode") != "joint_interpolation_override":
+        raise ValueError(f"Unsupported interpolation override mode: {payload.get('mode')}")
+    if not isinstance(payload.get("joint_names"), list) or not payload["joint_names"]:
+        raise ValueError("Interpolation override must contain a non-empty 'joint_names' list.")
+    return payload
+
+
 def validate_trajectory(arm, payload: dict[str, object], *, allow_zero_mismatch: bool) -> list[str]:
     joint_names = [str(joint_name) for joint_name in payload["joint_names"]]
     invalid = [joint_name for joint_name in joint_names if joint_name not in arm.config.joint_map]
     if invalid:
         raise ValueError(f"Trajectory contains joints missing from the active config: {invalid}")
+
+    offline = [joint_name for joint_name in joint_names if joint_name not in arm.online_joint_names]
+    if offline:
+        raise ConnectionError(
+            f"Trajectory contains joints not available on the bus: {offline}. "
+            f"Online joints: {list(arm.online_joint_names)}"
+        )
 
     file_zero_map = {
         str(joint_name): int(raw_value)
@@ -113,6 +147,122 @@ def validate_trajectory(arm, payload: dict[str, object], *, allow_zero_mismatch:
         missing = [joint_name for joint_name in joint_names if joint_name not in positions_deg]
         if missing:
             raise ValueError(f"Frame {index} is missing joint targets for: {missing}")
+
+    return joint_names
+
+
+def override_interpolation_type(payload: dict[str, object]) -> str:
+    interpolation = payload.get("interpolation", {})
+    if isinstance(interpolation, dict):
+        interpolation_type = str(interpolation.get("type", "smoothstep"))
+    else:
+        interpolation_type = str(interpolation)
+    if interpolation_type not in SUPPORTED_OVERRIDE_INTERPOLATIONS:
+        raise ValueError(
+            f"Unsupported interpolation override type: {interpolation_type}. "
+            f"Supported: {sorted(SUPPORTED_OVERRIDE_INTERPOLATIONS)}"
+        )
+    return interpolation_type
+
+
+def override_timing_policy(payload: dict[str, object]) -> str:
+    timing = payload.get("timing", {})
+    if not isinstance(timing, dict):
+        raise ValueError("Interpolation override 'timing' must be a JSON object.")
+    policy = str(timing.get("policy", "match_base_trajectory"))
+    if policy not in SUPPORTED_OVERRIDE_TIMING_POLICIES:
+        raise ValueError(
+            f"Unsupported interpolation override timing policy: {policy}. "
+            f"Supported: {sorted(SUPPORTED_OVERRIDE_TIMING_POLICIES)}"
+        )
+    return policy
+
+
+def override_waypoints(
+    payload: dict[str, object],
+    joint_names: list[str],
+) -> list[dict[str, object]]:
+    raw_waypoints = payload.get("waypoints")
+    if not isinstance(raw_waypoints, list) or len(raw_waypoints) < 2:
+        raise ValueError("Interpolation override must contain at least two waypoints.")
+
+    waypoints: list[dict[str, object]] = []
+    previous_phase = -1.0
+    for index, raw_waypoint in enumerate(raw_waypoints):
+        if not isinstance(raw_waypoint, dict):
+            raise ValueError(f"Override waypoint {index} must be a JSON object.")
+        if "phase" not in raw_waypoint or "positions_deg" not in raw_waypoint:
+            raise ValueError(f"Override waypoint {index} must contain 'phase' and 'positions_deg'.")
+
+        phase = float(raw_waypoint["phase"])
+        if phase < 0.0 or phase > 1.0:
+            raise ValueError(f"Override waypoint {index} phase must be within [0, 1], got {phase}.")
+        if phase < previous_phase:
+            raise ValueError(f"Override waypoint phases must be non-decreasing. Waypoint {index} went backwards.")
+        previous_phase = phase
+
+        positions_deg = dict(raw_waypoint["positions_deg"])
+        missing = [joint_name for joint_name in joint_names if joint_name not in positions_deg]
+        if missing:
+            raise ValueError(f"Override waypoint {index} is missing joint positions for: {missing}")
+        waypoints.append(
+            {
+                "phase": phase,
+                "positions_deg": {
+                    joint_name: float(positions_deg[joint_name])
+                    for joint_name in joint_names
+                },
+            }
+        )
+
+    if abs(float(waypoints[0]["phase"]) - 0.0) > 1e-9:
+        raise ValueError("Interpolation override first waypoint must have phase=0.0.")
+    if abs(float(waypoints[-1]["phase"]) - 1.0) > 1e-9:
+        raise ValueError("Interpolation override last waypoint must have phase=1.0.")
+    return waypoints
+
+
+def validate_interpolation_override(
+    arm,
+    payload: dict[str, object],
+    *,
+    allow_zero_mismatch: bool,
+) -> list[str]:
+    joint_names = [str(joint_name) for joint_name in payload["joint_names"]]
+    duplicates = sorted({joint_name for joint_name in joint_names if joint_names.count(joint_name) > 1})
+    if duplicates:
+        raise ValueError(f"Interpolation override contains duplicate joints: {duplicates}")
+
+    invalid = [joint_name for joint_name in joint_names if joint_name not in arm.config.joint_map]
+    if invalid:
+        raise ValueError(f"Interpolation override contains joints missing from the active config: {invalid}")
+
+    offline = [joint_name for joint_name in joint_names if joint_name not in arm.online_joint_names]
+    if offline:
+        raise ConnectionError(
+            f"Interpolation override contains joints not available on the bus: {offline}. "
+            f"Online joints: {list(arm.online_joint_names)}"
+        )
+
+    override_interpolation_type(payload)
+    override_timing_policy(payload)
+    override_waypoints(payload, joint_names)
+
+    file_zero_map = {
+        str(joint_name): int(raw_value)
+        for joint_name, raw_value in dict(payload.get("zero_position_raw_by_joint", {})).items()
+    }
+    mismatches = {
+        joint_name: {
+            "file": file_zero_map[joint_name],
+            "config": arm.config.require_joint(joint_name).zero_position_raw,
+        }
+        for joint_name in joint_names
+        if joint_name in file_zero_map
+        and file_zero_map[joint_name] != arm.config.require_joint(joint_name).zero_position_raw
+    }
+    if mismatches and not allow_zero_mismatch:
+        raise ValueError(f"Interpolation override zero references do not match the active config: {mismatches}")
 
     return joint_names
 
@@ -242,6 +392,153 @@ def build_playback_samples(
     return samples
 
 
+def interpolation_alpha(interpolation_type: str, phase: float) -> float:
+    phase = max(0.0, min(1.0, float(phase)))
+    if interpolation_type == "linear":
+        return phase
+    if interpolation_type == "smoothstep":
+        return phase * phase * (3.0 - 2.0 * phase)
+    raise ValueError(f"Unsupported interpolation type: {interpolation_type}")
+
+
+def interpolate_override_positions(
+    waypoints: list[dict[str, object]],
+    joint_names: list[str],
+    phase: float,
+    interpolation_type: str,
+) -> dict[str, float]:
+    phase = max(0.0, min(1.0, float(phase)))
+    first_positions = dict(waypoints[0]["positions_deg"])
+    if phase <= float(waypoints[0]["phase"]):
+        return {joint_name: float(first_positions[joint_name]) for joint_name in joint_names}
+
+    last_positions = dict(waypoints[-1]["positions_deg"])
+    if phase >= float(waypoints[-1]["phase"]):
+        return {joint_name: float(last_positions[joint_name]) for joint_name in joint_names}
+
+    for index in range(1, len(waypoints)):
+        start_waypoint = waypoints[index - 1]
+        end_waypoint = waypoints[index]
+        start_phase = float(start_waypoint["phase"])
+        end_phase = float(end_waypoint["phase"])
+        if phase > end_phase:
+            continue
+
+        phase_span = end_phase - start_phase
+        if phase_span <= 0:
+            raise ValueError(f"Override waypoints {index - 1} and {index} have the same phase.")
+
+        local_phase = (phase - start_phase) / phase_span
+        alpha = interpolation_alpha(interpolation_type, local_phase)
+        start_positions = dict(start_waypoint["positions_deg"])
+        end_positions = dict(end_waypoint["positions_deg"])
+        return {
+            joint_name: (1.0 - alpha) * float(start_positions[joint_name]) + alpha * float(end_positions[joint_name])
+            for joint_name in joint_names
+        }
+
+    return {joint_name: float(last_positions[joint_name]) for joint_name in joint_names}
+
+
+def required_override_speeds(
+    waypoints: list[dict[str, object]],
+    joint_names: list[str],
+    base_duration_sec: float,
+    interpolation_type: str,
+) -> dict[str, float]:
+    required_speeds = {joint_name: 0.0 for joint_name in joint_names}
+    speed_factor = 1.5 if interpolation_type == "smoothstep" else 1.0
+
+    for index in range(1, len(waypoints)):
+        start_waypoint = waypoints[index - 1]
+        end_waypoint = waypoints[index]
+        start_phase = float(start_waypoint["phase"])
+        end_phase = float(end_waypoint["phase"])
+        phase_duration = end_phase - start_phase
+        start_positions = dict(start_waypoint["positions_deg"])
+        end_positions = dict(end_waypoint["positions_deg"])
+
+        for joint_name in joint_names:
+            delta_deg = abs(float(end_positions[joint_name]) - float(start_positions[joint_name]))
+            if delta_deg <= POSITION_EPS_DEG:
+                continue
+            segment_duration = base_duration_sec * phase_duration
+            if segment_duration <= 0:
+                raise ValueError(
+                    f"Override joint {joint_name} moves {delta_deg:.6f} deg but the base trajectory duration is zero."
+                )
+            speed_deg_s = speed_factor * delta_deg / segment_duration
+            required_speeds[joint_name] = max(required_speeds[joint_name], speed_deg_s)
+
+    return required_speeds
+
+
+def apply_interpolation_override(
+    frames: list[dict[str, object]],
+    joint_names: list[str],
+    payload: dict[str, object],
+    *,
+    max_override_speed_deg_s: float | None,
+) -> tuple[list[dict[str, object]], list[str], dict[str, object]]:
+    override_joint_names = [str(joint_name) for joint_name in payload["joint_names"]]
+    interpolation_type = override_interpolation_type(payload)
+    timing_policy = override_timing_policy(payload)
+    waypoints = override_waypoints(payload, override_joint_names)
+    base_duration_sec = float(frames[-1]["t"]) if frames else 0.0
+    required_speeds = required_override_speeds(
+        waypoints,
+        override_joint_names,
+        base_duration_sec,
+        interpolation_type,
+    )
+
+    if max_override_speed_deg_s is not None:
+        too_fast = {
+            joint_name: speed_deg_s
+            for joint_name, speed_deg_s in required_speeds.items()
+            if speed_deg_s > max_override_speed_deg_s + POSITION_EPS_DEG
+        }
+        if too_fast:
+            raise ValueError(
+                f"Interpolation override exceeds --max-override-speed-deg-s={max_override_speed_deg_s}: "
+                f"{too_fast}"
+            )
+
+    merged_joint_names = list(joint_names)
+    for joint_name in override_joint_names:
+        if joint_name not in merged_joint_names:
+            merged_joint_names.append(joint_name)
+
+    merged_frames: list[dict[str, object]] = []
+    for frame in frames:
+        frame_t = float(frame["t"])
+        phase = 1.0 if base_duration_sec <= 0 else frame_t / base_duration_sec
+        override_positions = interpolate_override_positions(
+            waypoints,
+            override_joint_names,
+            phase,
+            interpolation_type,
+        )
+        positions_deg = dict(frame["positions_deg"])
+        positions_deg.update(override_positions)
+        merged_frames.append(
+            {
+                "t": frame_t,
+                "positions_deg": positions_deg,
+            }
+        )
+
+    summary = {
+        "joint_names": override_joint_names,
+        "interpolation": interpolation_type,
+        "timing_policy": timing_policy,
+        "base_duration_sec": base_duration_sec,
+        "required_speed_deg_s": required_speeds,
+        "max_override_speed_deg_s": max_override_speed_deg_s,
+    }
+    return merged_frames, merged_joint_names, summary
+
+
 def main() -> None:
     args = parse_args()
     if args.hold_sec < 0:
@@ -252,8 +549,15 @@ def main() -> None:
         raise ValueError("--speed-deg-s must be positive.")
     if args.playback_hz is not None and args.playback_hz <= 0:
         raise ValueError("--playback-hz must be positive.")
+    if args.max_override_speed_deg_s is not None and args.max_override_speed_deg_s <= 0:
+        raise ValueError("--max-override-speed-deg-s must be positive.")
 
     payload = load_trajectory(args.input)
+    interpolation_override = (
+        None
+        if args.interpolation_override is None
+        else load_interpolation_override(args.interpolation_override)
+    )
 
     with make_controller(args.config, args.port) as arm:
         joint_names = validate_trajectory(
@@ -262,6 +566,20 @@ def main() -> None:
             allow_zero_mismatch=args.allow_zero_mismatch,
         )
         frames = normalize_frames(payload["frames"], joint_names)
+        override_summary = None
+        if interpolation_override is not None:
+            validate_interpolation_override(
+                arm,
+                interpolation_override,
+                allow_zero_mismatch=args.allow_zero_mismatch,
+            )
+            frames, joint_names, override_summary = apply_interpolation_override(
+                frames,
+                joint_names,
+                interpolation_override,
+                max_override_speed_deg_s=args.max_override_speed_deg_s,
+            )
+            override_summary["path"] = str(args.interpolation_override)
         playback_hz = float(args.playback_hz)
         current_positions_deg = final_positions(arm, joint_names)
         playback_samples = build_playback_samples(
@@ -316,6 +634,7 @@ def main() -> None:
             "fixed_speed_deg_s": None if args.speed_deg_s is None else float(args.speed_deg_s),
             "duration_sec": float(dict(playback_samples[-1])["t"]) if playback_samples else 0.0,
             "joint_names": joint_names,
+            "interpolation_override": override_summary,
             "final_positions_deg": final_positions(arm, joint_names),
         }
 

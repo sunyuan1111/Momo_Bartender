@@ -42,7 +42,13 @@ def parse_args() -> argparse.Namespace:
         "--joint",
         action="append",
         default=None,
-        help="Joint name to record. Repeat to limit the recording to a subset. Defaults to all joints.",
+        help="Joint name to record. Repeat to limit the recording to a subset. Defaults to all online joints.",
+    )
+    parser.add_argument(
+        "--exclude-joint",
+        action="append",
+        default=None,
+        help="Joint name to skip from recording. Repeat for multiple joints.",
     )
     parser.add_argument(
         "--keep-torque",
@@ -52,22 +58,40 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def select_joint_names(arm, requested: list[str] | None) -> list[str]:
-    all_joint_names = [joint.name for joint in arm.config.joints]
-    if not requested:
-        return all_joint_names
-
-    invalid = [joint_name for joint_name in requested if joint_name not in all_joint_names]
-    if invalid:
-        raise ValueError(f"Unknown joints requested for recording: {invalid}")
-
+def dedupe_joint_names(joint_names: list[str]) -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
-    for joint_name in requested:
+    for joint_name in joint_names:
         if joint_name not in seen:
             ordered.append(joint_name)
             seen.add(joint_name)
     return ordered
+
+
+def select_joint_names(arm, requested: list[str] | None, excluded: list[str] | None) -> list[str]:
+    all_joint_names = [joint.name for joint in arm.config.joints]
+    online_joint_names = list(arm.online_joint_names)
+
+    invalid = [
+        joint_name
+        for joint_name in list(requested or []) + list(excluded or [])
+        if joint_name not in all_joint_names
+    ]
+    if invalid:
+        raise ValueError(f"Unknown joints requested for recording: {invalid}")
+
+    selected = dedupe_joint_names(list(requested or online_joint_names))
+    excluded_set = set(excluded or [])
+    selected = [joint_name for joint_name in selected if joint_name not in excluded_set]
+
+    offline = [joint_name for joint_name in selected if joint_name not in online_joint_names]
+    if offline:
+        raise ConnectionError(
+            f"Requested joints are not available on the bus: {offline}. "
+            f"Online joints: {online_joint_names}"
+        )
+
+    return selected
 
 
 def capture_frame(arm, joint_names: list[str], start_time: float) -> dict[str, object]:
@@ -99,7 +123,11 @@ def main() -> None:
         raise ValueError("--sample-hz must be positive.")
 
     with make_controller(args.config, args.port) as arm:
-        joint_names = select_joint_names(arm, args.joint)
+        joint_names = select_joint_names(arm, args.joint, args.exclude_joint)
+        if not joint_names:
+            raise RuntimeError("No joints are available on the bus for recording.")
+        if arm.missing_joint_names:
+            print(f"Ignoring joints not found on the bus: {list(arm.missing_joint_names)}")
         zero_position_raw_by_joint = {
             joint_name: arm.config.require_joint(joint_name).zero_position_raw for joint_name in joint_names
         }
@@ -142,6 +170,7 @@ def main() -> None:
             "stop_condition": "duration" if args.duration_sec is not None else "enter",
             "sample_hz": float(args.sample_hz),
             "joint_names": joint_names,
+            "missing_joint_names": list(arm.missing_joint_names),
             "torque_mode": torque_mode,
             "zero_position_raw_by_joint": zero_position_raw_by_joint,
             "frames": frames,
@@ -157,6 +186,7 @@ def main() -> None:
             "duration_sec": actual_duration_sec,
             "sample_hz": float(args.sample_hz),
             "joint_names": joint_names,
+            "missing_joint_names": list(payload["missing_joint_names"]),
             "stop_condition": payload["stop_condition"],
             "torque_mode": torque_mode,
         }
